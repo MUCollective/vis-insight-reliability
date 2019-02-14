@@ -35,8 +35,8 @@ TODO: change based on the decision-making task
 - [x] power curve?
 - [x] bimodal
 - [x] uniform
-- [ ] multivariate normal/gaussian -> what is it???
-	- take marginal 
+- [x] multivariate normal/gaussian
+	- [ ] take marginal 
 
 
 ## Beta
@@ -176,6 +176,7 @@ ggplot(mvn_samples_df) +
 # Build dataframe 
 
 ```{r}
+# TODO
 var_names <- c("id", "normal1", "normal2", "uniform", "")
 ```
 

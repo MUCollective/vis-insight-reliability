@@ -1,0 +1,189 @@
+---
+title: "Data generation"
+author: "Xiaoying Pu"
+date: "2/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(reshape2)
+library(poweRlaw) # powercurve?
+library(MASS) # multivariate Gaussian
+library(gganimate)
+library(gifski)
+```
+
+
+# Set up dataframe 
+
+
+```{r}
+n_obs <- 100
+# n_vars <- length(var_names)
+```
+
+
+# Data semantics
+
+TODO: change based on the decision-making task
+
+
+
+- [x] beta distributions
+- [x] power curve?
+- [x] bimodal
+- [x] uniform
+- [ ] multivariate normal/gaussian -> what is it???
+	- take marginal 
+
+
+## Beta
+
+Beta parameters from https://en.wikipedia.org/wiki/Beta_distribution
+
+```{r}
+a1 <- 2
+b1 <- 5
+
+a2 <- 2
+b2 <- 2
+
+beta_1 <- rbeta(n_obs, a1, b1)
+beta_2 <- rbeta(n_obs, a2, b2)
+```
+
+```{r}
+plot_df <- melt(data.frame(beta_1, beta_2))
+ggplot(plot_df) + geom_violin(aes(x = variable, y = value) )
+```
+
+### Comparison
+
+```{r}
+beta_sample1 <- rbeta(1, a1, b1)
+beta_sample2 <- rbeta(1, a2, b2)
+beta_compare_df <- data.frame(value = c(beta_sample1, beta_sample2), condition=c("beta_1", "beta_2"))
+
+ggplot(beta_compare_df) + 
+  geom_violin(data=plot_df, aes(x = variable, y = value) ) + 
+  geom_bar(aes(condition, value, alpha = 0.5), stat="identity") + 
+  ylim(c(0,1)) + NULL
+
+```
+
+
+## Power curve
+
+Not sure what powercurves are but https://www.rdocumentation.org/packages/poweRlaw/versions/0.70.2/topics/dpldis
+
+```{r}
+# from documentation example
+
+xmin <- 1
+alpha <- 2
+x <- xmin:n_obs
+power_curve <- rpldis(x, xmin, alpha)
+pc_df <- data.frame(power_curve)
+
+```
+
+
+```{r}
+ggplot(pc_df) + geom_density(aes(power_curve))
+```
+
+
+
+
+## Bimodal
+
+Just doing two gaussians: https://stats.stackexchange.com/questions/70855/generating-random-variables-from-a-mixture-of-normal-distributions
+
+```{r}
+components <- sample(1:2, prob = c(.4, .6), size = n_obs, replace = TRUE)
+mus <- c(0, 2) 
+sds <- c(1, 1)
+bimodal <- rnorm(n = n_obs, mus[components],sd=sds[components])
+bi_df <- data.frame(bimodal)
+```
+
+```{r}
+ggplot(bi_df) + geom_density(aes(bimodal))
+```
+
+```{r}
+ggplot(bi_df) +
+  geom_histogram(aes(bimodal), binwidth = 1)
+```
+
+
+
+## uniform
+
+```{r}
+uniform_1 <- runif(n = n_obs)
+```
+
+
+## Multivar gaussian
+
+https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/mvrnorm.html
+
+```{r}
+Sigma <- matrix(c(10,3,3,2),2,2)
+Sigma
+var(mvrnorm(n = 1000, rep(0, 2), Sigma))
+mvn_df <- data.frame(mvrnorm(n = n_obs, rep(0, 2), Sigma))
+```
+
+```{r}
+ggplot(mvn_df) + geom_point(aes(X2, X1))
+```
+
+
+TODO: transform one variable to uniform or something
+
+- calculate $\mu$ and $\sigma$ for the marginal Gaussian
+- get quantiles 
+- get X values from another CDF with the quantiles 
+
+
+### generate a bunch of them
+
+```{r}
+n_samples <- 4
+
+mvn_samples_df <- data.frame(matrix(nrow = 0, ncol = 3)) # bivariate + sample No.
+for (i in seq_len(n_samples)){
+  mvn_df <- data.frame(mvrnorm(n = n_obs, rep(0, 2), Sigma))
+  mvn_df$sample <- i 
+  mvn_samples_df <- rbind(mvn_samples_df, mvn_df)
+}
+
+```
+
+```{r}
+ggplot(mvn_samples_df) + 
+  geom_point(aes(X2,X1))  +
+  transition_time(sample) +
+  ease_aes('linear')
+```
+
+
+
+# Build dataframe 
+
+```{r}
+var_names <- c("id", "normal1", "normal2", "uniform", "")
+```
+
+## Insight types
+
+- Correlation: $r$
+- outlier: measure = ?? TODO
+- Comparison: HDI range? 
+
+
+

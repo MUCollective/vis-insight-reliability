@@ -30,9 +30,6 @@ trial_n <- 1
 
 
 
-
-
-
 # Build dataframes
 
 - Profit (dollars, integer)
@@ -53,7 +50,7 @@ var_names <- c("region", "profit", "ship_time")
 - outlier: measure = ?? TODO
 
 
-## Comparison
+# Comparison
 
 ```{r}
 task_cond <- "COM"
@@ -69,35 +66,12 @@ normal_df <- data_frame(normal_1, normal_2)
 ```
 
 
-### Baseline
+## Baseline
 
 ```{r}
 technique_cond <- "BAS"
 ```
 
-
-```{r}
-
-sample_n <- 1
-sampled_fn <- function(v) sample(x = v, size = sample_n ) 
-single_normal <- data_frame(profit = sapply(normal_df, sampled_fn), region = c("A", "B"))
-```
-
-
-```{r}
-fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
-
-ggplot(single_normal) + 
-  geom_col(aes(x = region, y = profit))
-```
-
-### Error bars
-
-```{r}
-technique_cond <- "BAR"
-```
-
-sample some
 
 ```{r}
 sample_n <- 10
@@ -108,6 +82,24 @@ sampled_normal %<>% melt(
   variable.name = "region", value.name = "profit"
 )
 ```
+
+
+```{r}
+fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+
+ggplot(sampled_normal, aes(x = region, y = profit)) + 
+  # geom_violin() + 
+  geom_quasirandom() +
+  # geom_pointrange(data = stat_df, mapping = aes(x= region, y = mean, ymin=low, ymax = high)) + 
+  NULL
+```
+
+## Error bars
+
+```{r}
+technique_cond <- "BAR"
+```
+
 
 calculate interval
 
@@ -133,7 +125,7 @@ ggplot(sampled_normal, aes(x = region, y = profit)) +
   NULL
 ```
 
-### HOPS
+## HOPS
 
 ```{r}
 technique_cond <- "HOP"
@@ -141,37 +133,81 @@ technique_cond <- "HOP"
 
 
 ```{r}
-sampled_normal$sample <- rep(1:10, 2)
+n_samples <- 4
+
+sample_normal_boots <- data.frame(matrix(nrow = 0, ncol = 3)) # bivariate + sample No.
+for (i in seq_len(n_samples)){
+  hops <- as.data.frame(sapply(normal_df, sampled_fn))
+  names(hops) <- c("A", "B")
+  hops %<>% melt(
+  variable.name = "region", value.name = "profit"
+  )
+  hops$sample <- i 
+  sample_normal_boots <- rbind(sample_normal_boots, hops)
+}
+
+
 ```
 
 
 ```{r}
 fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
 
-ggplot(sampled_normal) +
-  geom_col(aes(region, profit))  +
-  transition_states(sample, transition_length = 0, state_length = 0.5)
+ggplot(sample_normal_boots) +
+  geom_quasirandom(aes(region, profit))  +
+  transition_time(sample)
 ```
 
-### Superimposed ensembles
+## Superimposed ensembles
 
+Also displaying bootstrapped error bars
+
+```{r}
+stat_boots <- sample_normal_boots %>%
+  group_by(sample, region) %>%
+  summarize_all(funs(mean, se_fn)) %>%
+  ungroup() %>%
+  mutate(low = mean - se_fn) %>%
+  mutate(high = mean + se_fn) 
+
+```
+
+Beam me up, Scotty
 
 ```{r}
 technique_cond <- "SIE"
 fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
 
-ggplot(sampled_normal, aes(x = region, y = profit)) + 
-  # geom_violin() + 
-  geom_quasirandom() +
-  # geom_pointrange(data = stat_df, mapping = aes(x= region, y = mean, ymin=low, ymax = high)) + 
+ggplot(sample_normal_boots, aes(x = region, y = profit)) + 
+   geom_pointrange(data = stat_boots, mapping = aes(x= region, y = mean, ymin=low, ymax = high, color = factor(sample)), position = "jitter") +
+ # geom_violin() + 
+  geom_quasirandom(aes(color = factor(sample))) +
   NULL
 ```
 
-```{r}
+## Juxtaposed ensembles
 
+```{r}
+technique_cond <- "JXE"
 ```
 
-## Correlation
+```{r}
+subset_sampled_normal <- sampled_normal %>% filter(sample %in% 1:6)
+fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+
+ggplot(subset_sampled_normal) + 
+  geom_col(aes(region, profit)) + facet_wrap(.~sample)
+```
+
+## Opaque regularization
+
+## Transparent regularization
+
+
+## Beneficial distortion
+
+
+# Correlation
 
 Multivar gaussian
 

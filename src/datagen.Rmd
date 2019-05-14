@@ -12,6 +12,8 @@ library(reshape2)
 library(poweRlaw) # powercurve?
 library(MASS) # multivariate Gaussian
 library(gganimate)
+library(ggbeeswarm)
+library(magrittr)
 library(gifski)
 ```
 
@@ -127,6 +129,75 @@ uniform_1 <- runif(n = n_obs)
 ```
 
 
+
+
+
+
+# Build dataframes
+
+- Profit (dollars, integer)
+  - Gaussians with different means and standard deviations
+- Region (categorical)
+  - A, B, etc
+- Time to ship (days, integer)
+
+
+
+```{r}
+var_names <- c("region", "profit", "ship_time")
+```
+
+
+- Comparison: HDI range? 
+- Correlation: $r$
+- outlier: measure = ?? TODO
+
+
+## Comparison
+
+
+Normal
+
+
+```{r}
+normal_1 <- rnorm(n = n_obs, mean = 2, sd = .2) *10000
+normal_2 <- rnorm(n = n_obs, mean = 2.2, sd = .2)*10000
+normal_df <- data_frame(normal_1, normal_2)
+```
+
+
+samples
+
+- sample from two independent normals
+
+```{r}
+sample_n <- 1
+sampled_fn <- function(v) sample(x = v, size = sample_n ) 
+sampled_normal <- data_frame(profit = sapply(normal_df, sampled_fn), region = c("A", "B"))
+
+ggplot(sampled_normal) + 
+  geom_col(aes(x = region, y = profit))
+```
+
+```{r}
+sample_n <- 10
+sampled_fn <- function(v) sample(x = v, size = sample_n ) 
+sampled_normal <- as.data.frame(sapply(normal_df, sampled_fn))
+names(sampled_normal) <- c("A", "B")
+sampled_normal %<>% melt(
+  variable.name = "region", value.name = "profit"
+)
+
+
+ggplot(sampled_normal, aes(x = region, y = profit)) + 
+  geom_violin() + 
+  geom_quasirandom() + 
+  NULL
+```
+
+
+## Correlation
+
 ## Multivar gaussian
 
 https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/mvrnorm.html
@@ -171,20 +242,7 @@ ggplot(mvn_samples_df) +
   ease_aes('linear')
 ```
 
-
-
-# Build dataframe 
-
 ```{r}
-# TODO
-var_names <- c("id", "normal1", "normal2", "uniform", "")
+
 ```
-
-## Insight types
-
-- Correlation: $r$
-- outlier: measure = ?? TODO
-- Comparison: HDI range? 
-
-
 

@@ -23,11 +23,229 @@ library(gifski)
 
 ```{r}
 n_obs <- 100
+trial_n <- 1
+
 # n_vars <- length(var_names)
 ```
 
 
-# Data semantics
+
+
+
+
+# Build dataframes
+
+- Profit (dollars, integer)
+  - Gaussians with different means and standard deviations
+- Region (categorical)
+  - A, B, etc
+- Time to ship (days, integer)
+
+
+
+```{r}
+var_names <- c("region", "profit", "ship_time")
+```
+
+
+- Comparison: HDI range? 
+- Correlation: $r$
+- outlier: measure = ?? TODO
+
+
+## Comparison
+
+```{r}
+task_cond <- "COM"
+```
+
+
+Two independent normals
+
+```{r}
+normal_1 <- rnorm(n = n_obs, mean = 2, sd = .2) *10000
+normal_2 <- rnorm(n = n_obs, mean = 2.2, sd = .2)*10000
+normal_df <- data_frame(normal_1, normal_2)
+```
+
+
+### Baseline
+
+```{r}
+technique_cond <- "BAS"
+```
+
+
+```{r}
+
+sample_n <- 1
+sampled_fn <- function(v) sample(x = v, size = sample_n ) 
+single_normal <- data_frame(profit = sapply(normal_df, sampled_fn), region = c("A", "B"))
+```
+
+
+```{r}
+fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+
+ggplot(single_normal) + 
+  geom_col(aes(x = region, y = profit))
+```
+
+### Error bars
+
+```{r}
+technique_cond <- "BAR"
+```
+
+sample some
+
+```{r}
+sample_n <- 10
+sampled_fn <- function(v) sample(x = v, size = sample_n ) 
+sampled_normal <- as.data.frame(sapply(normal_df, sampled_fn))
+names(sampled_normal) <- c("A", "B")
+sampled_normal %<>% melt(
+  variable.name = "region", value.name = "profit"
+)
+```
+
+calculate interval
+
+```{r}
+se_fn <- function(x) 1.96 * (sd(x, na.rm = TRUE)/sqrt(length(x)))
+stat_df <- sampled_normal %>%
+  group_by(region) %>%
+  summarize_all(funs(mean, se_fn)) %>%
+  ungroup() %>%
+  mutate(low = mean - se_fn) %>%
+  mutate(high = mean + se_fn) 
+
+```
+
+
+```{r}
+fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+
+ggplot(sampled_normal, aes(x = region, y = profit)) + 
+  geom_violin() + 
+  # geom_quasirandom() + 
+  geom_pointrange(data = stat_df, mapping = aes(x= region, y = mean, ymin=low, ymax = high)) + 
+  NULL
+```
+
+### HOPS
+
+```{r}
+technique_cond <- "HOP"
+```
+
+
+```{r}
+sampled_normal$sample <- rep(1:10, 2)
+```
+
+
+```{r}
+fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+
+ggplot(sampled_normal) +
+  geom_col(aes(region, profit))  +
+  transition_states(sample, transition_length = 0, state_length = 0.5)
+```
+
+### Superimposed ensembles
+
+
+```{r}
+technique_cond <- "SIE"
+fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+
+ggplot(sampled_normal, aes(x = region, y = profit)) + 
+  # geom_violin() + 
+  geom_quasirandom() +
+  # geom_pointrange(data = stat_df, mapping = aes(x= region, y = mean, ymin=low, ymax = high)) + 
+  NULL
+```
+
+```{r}
+
+```
+
+## Correlation
+
+Multivar gaussian
+
+https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/mvrnorm.html
+
+positive correlation
+
+```{r}
+Sigma_pos <- matrix(c(10,3,3,2),2,2)
+mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
+names(mvn_df) <- c("profit", "time")
+mvn_df$profit <- mvn_df$profit * 1000
+
+ggplot(mvn_df) + geom_point(aes(profit, time))
+```
+
+negative correlation
+
+```{r}
+Sigma_pos <- matrix(c(10,-3,3,2),2,2)
+mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
+names(mvn_df) <- c("profit", "time")
+mvn_df$profit <- mvn_df$profit * 1000
+
+ggplot(mvn_df) + geom_point(aes(profit, time))
+```
+
+no correlation
+
+```{r}
+Sigma_pos <- matrix(c(10,0 ,0,2),2,2)
+mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
+names(mvn_df) <- c("profit", "time")
+mvn_df$profit <- mvn_df$profit * 1000
+
+ggplot(mvn_df) + geom_point(aes(profit, time))
+```
+
+
+TODO: transform one variable to uniform or something
+
+- calculate $\mu$ and $\sigma$ for the marginal Gaussian
+- get quantiles 
+- get X values from another CDF with the quantiles 
+
+
+generate a bunch of them
+
+```{r}
+n_samples <- 4
+
+mvn_samples_df <- data.frame(matrix(nrow = 0, ncol = 3)) # bivariate + sample No.
+for (i in seq_len(n_samples)){
+  mvn_df <- data.frame(mvrnorm(n = n_obs, rep(0, 2), Sigma_pos))
+  mvn_df$sample <- i 
+  mvn_samples_df <- rbind(mvn_samples_df, mvn_df)
+}
+
+```
+
+```{r}
+# ggplot(mvn_samples_df) + 
+#   geom_point(aes(X2,X1))  +
+#   transition_time(sample) +
+#   ease_aes('linear')
+```
+
+```{r}
+
+```
+
+
+
+# ------- Data semantics
 
 TODO: change based on the decision-making task
 
@@ -130,119 +348,4 @@ uniform_1 <- runif(n = n_obs)
 
 
 
-
-
-
-# Build dataframes
-
-- Profit (dollars, integer)
-  - Gaussians with different means and standard deviations
-- Region (categorical)
-  - A, B, etc
-- Time to ship (days, integer)
-
-
-
-```{r}
-var_names <- c("region", "profit", "ship_time")
-```
-
-
-- Comparison: HDI range? 
-- Correlation: $r$
-- outlier: measure = ?? TODO
-
-
-## Comparison
-
-
-Normal
-
-
-```{r}
-normal_1 <- rnorm(n = n_obs, mean = 2, sd = .2) *10000
-normal_2 <- rnorm(n = n_obs, mean = 2.2, sd = .2)*10000
-normal_df <- data_frame(normal_1, normal_2)
-```
-
-
-samples
-
-- sample from two independent normals
-
-```{r}
-sample_n <- 1
-sampled_fn <- function(v) sample(x = v, size = sample_n ) 
-sampled_normal <- data_frame(profit = sapply(normal_df, sampled_fn), region = c("A", "B"))
-
-ggplot(sampled_normal) + 
-  geom_col(aes(x = region, y = profit))
-```
-
-```{r}
-sample_n <- 10
-sampled_fn <- function(v) sample(x = v, size = sample_n ) 
-sampled_normal <- as.data.frame(sapply(normal_df, sampled_fn))
-names(sampled_normal) <- c("A", "B")
-sampled_normal %<>% melt(
-  variable.name = "region", value.name = "profit"
-)
-
-
-ggplot(sampled_normal, aes(x = region, y = profit)) + 
-  geom_violin() + 
-  geom_quasirandom() + 
-  NULL
-```
-
-
-## Correlation
-
-## Multivar gaussian
-
-https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/mvrnorm.html
-
-```{r}
-Sigma <- matrix(c(10,3,3,2),2,2)
-Sigma
-var(mvrnorm(n = 1000, rep(0, 2), Sigma))
-mvn_df <- data.frame(mvrnorm(n = n_obs, rep(0, 2), Sigma))
-```
-
-```{r}
-ggplot(mvn_df) + geom_point(aes(X2, X1))
-```
-
-
-TODO: transform one variable to uniform or something
-
-- calculate $\mu$ and $\sigma$ for the marginal Gaussian
-- get quantiles 
-- get X values from another CDF with the quantiles 
-
-
-### generate a bunch of them
-
-```{r}
-n_samples <- 4
-
-mvn_samples_df <- data.frame(matrix(nrow = 0, ncol = 3)) # bivariate + sample No.
-for (i in seq_len(n_samples)){
-  mvn_df <- data.frame(mvrnorm(n = n_obs, rep(0, 2), Sigma))
-  mvn_df$sample <- i 
-  mvn_samples_df <- rbind(mvn_samples_df, mvn_df)
-}
-
-```
-
-```{r}
-ggplot(mvn_samples_df) + 
-  geom_point(aes(X2,X1))  +
-  transition_time(sample) +
-  ease_aes('linear')
-```
-
-```{r}
-
-```
 

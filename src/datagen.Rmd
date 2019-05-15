@@ -306,7 +306,7 @@ regularized_sampled_normal <-
 ```{r}
 reg_and_unreg <-dplyr::bind_rows(
   list(unregularized=sampled_normal,
-       regularized=reguarlized_sampled_normal), .id = 'source')
+       regularized=regularized_sampled_normal), .id = 'source')
 
 reg_and_unreg %>%
   ggplot(aes(x = region, y = profit, color = source)) + 
@@ -321,11 +321,22 @@ reg_and_unreg %>%
 
 
 ```{r}
-
+reg_and_unreg %>%
+  filter(source == "regularized") %>%
+  ggplot(aes(x = region, y = profit, color = source)) + 
+  geom_point() + 
+  geom_pointrange(data = model_df[model_df$model == "regularized",], 
+                  mapping = aes(y = condition_mean, 
+             x = region, ymin = .lower, ymax = .upper, color = model), position = 
+               position_nudge(x = 0.1))
 ```
+
+
+
 
 ## Beneficial distortion
 
+Zu tun
 
 # Correlation
 
@@ -339,7 +350,7 @@ positive correlation
 Sigma_pos <- matrix(c(10,3,3,2),2,2)
 mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
 names(mvn_df) <- c("profit", "time")
-mvn_df$profit <- mvn_df$profit * 1000
+mvn_df$profit <- mvn_df$profit 
 
 ggplot(mvn_df) + geom_point(aes(profit, time))
 ```

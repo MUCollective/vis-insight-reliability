@@ -192,16 +192,24 @@ technique_cond <- "JXE"
 ```
 
 ```{r}
-subset_sampled_normal <- sampled_normal %>% filter(sample %in% 1:6)
 fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
 
-ggplot(subset_sampled_normal) + 
-  geom_col(aes(region, profit)) + facet_wrap(.~sample)
+ggplot(sample_normal_boots) + 
+  geom_quasirandom(aes(region, profit)) + facet_grid(.~sample)
 ```
 
 ## Opaque regularization
 
+```{r}
+
+```
+
+
 ## Transparent regularization
+
+```{r}
+
+```
 
 
 ## Beneficial distortion

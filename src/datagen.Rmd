@@ -15,6 +15,11 @@ library(gganimate)
 library(ggbeeswarm)
 library(magrittr)
 library(gifski)
+library(brms)
+library(tidybayes)
+library(emmeans)
+library(ggstance)
+
 ```
 
 
@@ -60,8 +65,8 @@ task_cond <- "COM"
 Two independent normals
 
 ```{r}
-normal_1 <- rnorm(n = n_obs, mean = 2, sd = .2) *10000
-normal_2 <- rnorm(n = n_obs, mean = 2.2, sd = .2)*10000
+normal_1 <- rnorm(n = n_obs, mean = 2, sd = .2) 
+normal_2 <- rnorm(n = n_obs, mean = 2.2, sd = .2)
 normal_df <- data_frame(normal_1, normal_2)
 ```
 
@@ -198,19 +203,126 @@ ggplot(sample_normal_boots) +
   geom_quasirandom(aes(region, profit)) + facet_grid(.~sample)
 ```
 
-## Opaque regularization
-
-```{r}
-
-```
-
-
 ## Transparent regularization
 
+Linear model
+
 ```{r}
+unregularized_m <- brm(profit ~ region, data = sampled_normal,
+         control = list(adapt_delta = .99),
+         save_model = "unregularized")
+```
+
+Inspect model
+
+```{r}
+summary(unregularized_m)
+
+A <- unregularized_m %>%
+  spread_draws(b_Intercept) %>%
+  mean_qi() %>%
+  mutate("region" = "A") 
+
+B <- unregularized_m %>%
+  spread_draws(b_regionB, b_Intercept) %>%
+  mean_qi(b_Intercept = b_regionB + b_Intercept) %>%
+  mutate("region" = "B")
+
+unregularized_df <- rbind(A, B) %>%
+  rename(condition_mean = "b_Intercept") %>%
+  add_column(model = "unregularized")
 
 ```
 
+
+```{r}
+unregularized_df %>%   
+  ggplot(aes(y = condition_mean, 
+             x = region, ymin = .lower, ymax = .upper)) +
+  geom_pointrange()
+```
+
+
+Regularized model
+
+```{r}
+sampled_normal$profit <- sampled_normal$profit
+
+regularized_m <- brm(profit ~ 0 + intercept + region, 
+                     data = sampled_normal,
+                     control = list(adapt_delta = .99),
+                     prior = set_prior("horseshoe(2.1)", class = "b"))
+```
+
+```{r}
+summary(regularized_m)
+
+A_reg <- regularized_m %>%
+  spread_draws(b_intercept) %>%
+  mean_qi() %>%
+  mutate("region" = "A") 
+
+B_reg <- regularized_m %>%
+  spread_draws(b_regionB, b_intercept) %>%
+  mean_qi(b_intercept = b_regionB + b_intercept ) %>%
+  mutate("region" = "B")
+
+regularized_df <- rbind(A_reg, B_reg) %>%
+  rename(condition_mean = "b_intercept") %>%
+  add_column(model = "regularized") %>%
+  mutate(condition_mean = condition_mean) %>%
+  mutate(.lower = .lower) %>%
+  mutate(.upper = .upper )
+
+
+
+
+model_df <- rbind(unregularized_df, regularized_df)
+```
+
+
+```{r}
+model_df %>%   
+  ggplot(aes(y = condition_mean, 
+             x = region, ymin = .lower, ymax = .upper, color = model)) +
+  geom_pointrange()
+
+```
+
+Change original data
+
+```{r}
+
+A_shift <- model_df$condition_mean[1] - model_df$condition_mean[3]
+
+B_shift <- model_df$condition_mean[2] - model_df$condition_mean[4]
+
+regularized_sampled_normal <- 
+  sampled_normal %>% 
+  mutate(profit = ifelse(region == "A", profit - A_shift, profit - B_shift))
+
+```
+
+```{r}
+reg_and_unreg <-dplyr::bind_rows(
+  list(unregularized=sampled_normal,
+       regularized=reguarlized_sampled_normal), .id = 'source')
+
+reg_and_unreg %>%
+  ggplot(aes(x = region, y = profit, color = source)) + 
+  geom_point() + 
+  geom_pointrange(data = model_df, 
+                  mapping = aes(y = condition_mean, 
+             x = region, ymin = .lower, ymax = .upper, color = model), position = 
+               position_nudge(x = 0.1))
+```
+
+## Opaque regularization
+
+
+```{r}
+
+```
 
 ## Beneficial distortion
 

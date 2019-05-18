@@ -6,6 +6,9 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(reshape2)
@@ -29,10 +32,13 @@ library(ggstance)
 ```{r}
 n_obs <- 100
 trial_n <- 1
-
-# n_vars <- length(var_names)
 ```
 
+```{r}
+gen_fig_name <- function(task_cond, technique_cond, data_cond, trial_n){
+   paste0(paste(c(task_cond, technique_cond, data_cond, trial_n), collapse = "_"), ".png")
+}
+```
 
 
 # Build dataframes
@@ -43,11 +49,7 @@ trial_n <- 1
   - A, B, etc
 - Time to ship (days, integer)
 
-
-
-```{r}
-var_names <- c("region", "profit", "ship_time")
-```
+`var_names <- c("region", "profit", "ship_time")`
 
 
 - Comparison: HDI range? 
@@ -64,10 +66,28 @@ task_cond <- "COM"
 
 Two independent normals
 
+- params:
+  - mean of A, sd of A,
+  - mean of B, sd of B,
+- conditions (all equal variance)
+  1. Mean of B greater than A
+  2. Mean of B smaller than A
+  3. Egal
+
+
 ```{r}
-normal_1 <- rnorm(n = n_obs, mean = 2, sd = .2) 
-normal_2 <- rnorm(n = n_obs, mean = 2.2, sd = .2)
-normal_df <- data_frame(normal_1, normal_2)
+data_cond <- c("1")
+
+nparams <- switch(data_cond,
+  "1" = data.frame(means = c(rep(2, n_obs), rep(2.2, n_obs)), sd = c(.2)),
+  "2" = data.frame(means = c(rep(2.2, n_obs), rep(2, n_obs)), sd = c(.2)),
+  "3" = data.frame(means = c(rep(2, n_obs), rep(2, n_obs)), sd = c(.2))
+)
+
+normal_df <- rnorm(n = nparams$means, mean = nparams$means, sd = nparams$sd) %>%
+  matrix(ncol = 2) %>%
+  as.data.frame() %>%
+  rename(normal_1 = "V1", normal_2 = "V2")
 ```
 
 
@@ -90,7 +110,7 @@ sampled_normal %<>% melt(
 
 
 ```{r}
-fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+fig_fname <- gen_fig_name(task_cond, technique_cond, data_cond, trial_n)
 
 ggplot(sampled_normal, aes(x = region, y = profit)) + 
   # geom_violin() + 
@@ -121,7 +141,8 @@ stat_df <- sampled_normal %>%
 
 
 ```{r}
-fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_"), ".png")
+fig_fname <- gen_fig_name(task_cond, technique_cond, data_cond, trial_n)
+
 
 ggplot(sampled_normal, aes(x = region, y = profit)) + 
   geom_violin() + 
@@ -338,15 +359,20 @@ reg_and_unreg %>%
 
 Zu tun
 
+
+
+
 # Correlation
 
 Multivar gaussian
 
 https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/mvrnorm.html
 
-positive correlation
+- positive correlation
+- negative correlation
 
 ```{r}
+
 Sigma_pos <- matrix(c(10,3,3,2),2,2)
 mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
 names(mvn_df) <- c("profit", "time")
@@ -355,7 +381,6 @@ mvn_df$profit <- mvn_df$profit
 ggplot(mvn_df) + geom_point(aes(profit, time))
 ```
 
-negative correlation
 
 ```{r}
 Sigma_pos <- matrix(c(10,-3,3,2),2,2)
@@ -399,120 +424,7 @@ for (i in seq_len(n_samples)){
 
 ```
 
-```{r}
-# ggplot(mvn_samples_df) + 
-#   geom_point(aes(X2,X1))  +
-#   transition_time(sample) +
-#   ease_aes('linear')
-```
 
 ```{r}
-
 ```
-
-
-
-# ------- Data semantics
-
-TODO: change based on the decision-making task
-
-
-
-- [x] beta distributions
-- [x] power curve?
-- [x] bimodal
-- [x] uniform
-- [x] multivariate normal/gaussian
-	- [ ] take marginal 
-
-
-## Beta
-
-Beta parameters from https://en.wikipedia.org/wiki/Beta_distribution
-
-```{r}
-a1 <- 2
-b1 <- 5
-
-a2 <- 2
-b2 <- 2
-
-beta_1 <- rbeta(n_obs, a1, b1)
-beta_2 <- rbeta(n_obs, a2, b2)
-```
-
-```{r}
-plot_df <- melt(data.frame(beta_1, beta_2))
-ggplot(plot_df) + geom_violin(aes(x = variable, y = value) )
-```
-
-### Comparison
-
-```{r}
-beta_sample1 <- rbeta(1, a1, b1)
-beta_sample2 <- rbeta(1, a2, b2)
-beta_compare_df <- data.frame(value = c(beta_sample1, beta_sample2), condition=c("beta_1", "beta_2"))
-
-ggplot(beta_compare_df) + 
-  geom_violin(data=plot_df, aes(x = variable, y = value) ) + 
-  geom_bar(aes(condition, value, alpha = 0.5), stat="identity") + 
-  ylim(c(0,1)) + NULL
-
-```
-
-
-## Power curve
-
-Not sure what powercurves are but https://www.rdocumentation.org/packages/poweRlaw/versions/0.70.2/topics/dpldis
-
-```{r}
-# from documentation example
-
-xmin <- 1
-alpha <- 2
-x <- xmin:n_obs
-power_curve <- rpldis(x, xmin, alpha)
-pc_df <- data.frame(power_curve)
-
-```
-
-
-```{r}
-ggplot(pc_df) + geom_density(aes(power_curve))
-```
-
-
-
-
-## Bimodal
-
-Just doing two gaussians: https://stats.stackexchange.com/questions/70855/generating-random-variables-from-a-mixture-of-normal-distributions
-
-```{r}
-components <- sample(1:2, prob = c(.4, .6), size = n_obs, replace = TRUE)
-mus <- c(0, 2) 
-sds <- c(1, 1)
-bimodal <- rnorm(n = n_obs, mus[components],sd=sds[components])
-bi_df <- data.frame(bimodal)
-```
-
-```{r}
-ggplot(bi_df) + geom_density(aes(bimodal))
-```
-
-```{r}
-ggplot(bi_df) +
-  geom_histogram(aes(bimodal), binwidth = 1)
-```
-
-
-
-## uniform
-
-```{r}
-uniform_1 <- runif(n = n_obs)
-```
-
-
-
 

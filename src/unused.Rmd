@@ -1,0 +1,113 @@
+---
+title: "Unused"
+author: "Xiaoying Pu"
+date: "5/15/2019"
+output: html_document
+---
+
+
+
+# ------- Data semantics
+
+TODO: change based on the decision-making task
+
+
+
+- [x] beta distributions
+- [x] power curve?
+- [x] bimodal
+- [x] uniform
+- [x] multivariate normal/gaussian
+	- [ ] take marginal 
+
+
+## Beta
+
+Beta parameters from https://en.wikipedia.org/wiki/Beta_distribution
+
+```{r}
+a1 <- 2
+b1 <- 5
+
+a2 <- 2
+b2 <- 2
+
+beta_1 <- rbeta(n_obs, a1, b1)
+beta_2 <- rbeta(n_obs, a2, b2)
+```
+
+```{r}
+plot_df <- melt(data.frame(beta_1, beta_2))
+ggplot(plot_df) + geom_violin(aes(x = variable, y = value) )
+```
+
+### Comparison
+
+```{r}
+beta_sample1 <- rbeta(1, a1, b1)
+beta_sample2 <- rbeta(1, a2, b2)
+beta_compare_df <- data.frame(value = c(beta_sample1, beta_sample2), condition=c("beta_1", "beta_2"))
+
+ggplot(beta_compare_df) + 
+  geom_violin(data=plot_df, aes(x = variable, y = value) ) + 
+  geom_bar(aes(condition, value, alpha = 0.5), stat="identity") + 
+  ylim(c(0,1)) + NULL
+
+```
+
+
+## Power curve
+
+Not sure what powercurves are but https://www.rdocumentation.org/packages/poweRlaw/versions/0.70.2/topics/dpldis
+
+```{r}
+# from documentation example
+
+xmin <- 1
+alpha <- 2
+x <- xmin:n_obs
+power_curve <- rpldis(x, xmin, alpha)
+pc_df <- data.frame(power_curve)
+
+```
+
+
+```{r}
+ggplot(pc_df) + geom_density(aes(power_curve))
+```
+
+
+
+
+## Bimodal
+
+Just doing two gaussians: https://stats.stackexchange.com/questions/70855/generating-random-variables-from-a-mixture-of-normal-distributions
+
+```{r}
+components <- sample(1:2, prob = c(.4, .6), size = n_obs, replace = TRUE)
+mus <- c(0, 2) 
+sds <- c(1, 1)
+bimodal <- rnorm(n = n_obs, mus[components],sd=sds[components])
+bi_df <- data.frame(bimodal)
+```
+
+```{r}
+ggplot(bi_df) + geom_density(aes(bimodal))
+```
+
+```{r}
+ggplot(bi_df) +
+  geom_histogram(aes(bimodal), binwidth = 1)
+```
+
+
+
+## uniform
+
+```{r}
+uniform_1 <- runif(n = n_obs)
+```
+
+
+
+

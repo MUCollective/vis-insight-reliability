@@ -11,6 +11,7 @@ rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(modelr)
 library(reshape2)
 library(poweRlaw) # powercurve?
 library(MASS) # multivariate Gaussian
@@ -22,6 +23,7 @@ library(brms)
 library(tidybayes)
 library(emmeans)
 library(ggstance)
+library(transformr)
 
 ```
 
@@ -368,39 +370,32 @@ Multivar gaussian
 
 https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/mvrnorm.html
 
-- positive correlation
-- negative correlation
+1. positive correlation 
+2. negative correlation
+3. no correlation
 
 ```{r}
+data_cond <- "1"
 
-Sigma_pos <- matrix(c(10,3,3,2),2,2)
-mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
+sigma <- switch(data_cond,
+                "1" = matrix(c(10,3,3,2),2,2),
+                "2" = matrix(c(10,-3,3,2),2,2),
+                "3" = matrix(c(10,0 ,0,2),2,2))
+
+
+mvn_df <- data.frame(mvrnorm(n = n_obs, c(2, 10), sigma))
 names(mvn_df) <- c("profit", "time")
 mvn_df$profit <- mvn_df$profit 
 
-ggplot(mvn_df) + geom_point(aes(profit, time))
 ```
 
+
+## Baseline
 
 ```{r}
-Sigma_pos <- matrix(c(10,-3,3,2),2,2)
-mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
-names(mvn_df) <- c("profit", "time")
-mvn_df$profit <- mvn_df$profit * 1000
-
 ggplot(mvn_df) + geom_point(aes(profit, time))
 ```
 
-no correlation
-
-```{r}
-Sigma_pos <- matrix(c(10,0 ,0,2),2,2)
-mvn_df <- data.frame(mvrnorm(n = 20, c(20, 10), Sigma_pos))
-names(mvn_df) <- c("profit", "time")
-mvn_df$profit <- mvn_df$profit * 1000
-
-ggplot(mvn_df) + geom_point(aes(profit, time))
-```
 
 
 TODO: transform one variable to uniform or something
@@ -410,21 +405,84 @@ TODO: transform one variable to uniform or something
 - get X values from another CDF with the quantiles 
 
 
-generate a bunch of them
+## "Error bar"/prob bands
 
 ```{r}
-n_samples <- 4
-
-mvn_samples_df <- data.frame(matrix(nrow = 0, ncol = 3)) # bivariate + sample No.
-for (i in seq_len(n_samples)){
-  mvn_df <- data.frame(mvrnorm(n = n_obs, rep(0, 2), Sigma_pos))
-  mvn_df$sample <- i 
-  mvn_samples_df <- rbind(mvn_samples_df, mvn_df)
-}
-
+m_corr <- brm(time ~ profit, data = mvn_df)
 ```
 
 
 ```{r}
+summary(m_corr)
+
+corr_fits <- mvn_df %>%
+  data_grid(profit = seq_range(profit, n = 21)) %>%
+  add_fitted_draws(m_corr)
+```
+
+posterior fit prob bands
+
+```{r}
+corr_fits %>%
+  ggplot(aes(profit, time)) +
+  stat_lineribbon(aes(y = .value)) +
+  geom_point(data = mvn_df, mapping = aes(profit, time)) +
+  scale_fill_brewer()
+
+```
+
+or just `lm`?
+
+```{r}
+ggplot(mvn_df, aes(profit, time)) + 
+  geom_point() + 
+  geom_smooth(method = lm)
+```
+
+## HOPs
+
+```{r}
+corr_fits %>%
+  ggplot(aes(profit, time)) + 
+  geom_line(aes(y = .value, group = .draw)) + 
+  geom_point(data = mvn_samples_df) +
+  scale_color_brewer(palette = "Dark2") + 
+  transition_states(.draw, 0,1)
+  NULL
+```
+
+
+
+
+
+
+## Superimpsed ensemble
+
+```{r}
+n_ensemble_members <- 4
+member_size <- 20
+
+mvn_samples_df <- data.frame(matrix(nrow = 0, ncol = 3)) # bivariate + sample No.
+for (i in seq_len(n_ensemble_members)){
+  a_member <- mvn_df %>%
+    sample_n(member_size)
+  a_member$sample <- i 
+  mvn_samples_df <- rbind(mvn_samples_df, a_member)
+}
+```
+
+oops
+
+```{r}
+ggplot(mvn_samples_df,
+       aes(profit, time)) +
+  geom_point(aes(color = factor(sample))) +
+  geom_smooth(method = "lm", aes(fill = factor(sample)))
+```
+
+
+
+```{r}
+
 ```
 

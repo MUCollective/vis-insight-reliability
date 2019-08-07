@@ -1,0 +1,379 @@
+---
+title: "Stimulus Data"
+author: "Abhraneel Sarma"
+date: "7/26/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(rstanarm)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(modelr)
+library(tidybayes)
+
+theme_set( theme_gray() )
+```
+
+
+### Stimuli
+
+We are using the following stimuli to test:
+
+- scatterplot / raw data
+- mean point estimate
+- mean point estimate with 95% confidence intervals
+- gradient plot
+- hypothetical outcome plots
+- quantile dot plots
+- cumulative distribution function
+- cumulative distribution function + probability density function
+- ensemble plots (overlay of low opacity bootstrapped means)
+
+### Conditions
+We will use the following conditions for the mean for each region:
+
+- no difference between the means for each region
+- 1/4 s.d. difference for the mean of one region
+- 1/2 s.d. difference for the mean of one region
+
+We will use the following **sample sizes** for the data being visualized for each region: 20, 30, 50, 75, 100
+
+
+## Scenario 1
+You are comparing profits for a product across n (= 5) regions.
+
+### Set of possible insights
+
+1. All the regions are equally profitable (TRUE for 1, 6, 11)
+2. Region `x` is slightly less profitable than the other regions (TRUE for 2, 7, 12; where `x` is `C` )
+3. Region `x` is slightly more profitable than the other regions (TRUE for 3, 8, 13; where `x` is  `C`, `B` and `C` respectively)
+4. Region `x` is significantly less profitable than the other regions (TRUE for 4, 9, 14; where `x` is `C`, `B` and `D` respectively )
+5. Region `x` is significantly more profitable than the other regions (TRUE for 5, 10, 15; where `x` is `E`, `A` and `B` respectively)
+
+```{r}
+n = 5
+multiplier = 10
+
+create_data <- function(k, mean, diff, sd, groups ) {
+  means = c( rep(mean, groups-1),  mean + diff * sd )
+  map_dfc(means, ~ rnorm(k, ., sd)) %>% 
+    setNames( sample(LETTERS[1:ncol(.)]) ) %>%
+    gather("region", "profit") %>%
+    mutate( true_mean = rep(means, each = k) )
+}
+```
+
+
+```{r}
+set.seed(100)
+
+data = crossing(
+  size = c(20, 30, 50),
+  mean = 2,
+  diff = c(0, 0.25, 0.5),
+  sign = c(-1, 1),
+  sd = 0.5,
+  groups = 5
+) %>%
+  filter( !(sign == -1 & diff == 0) ) %>%
+  mutate( 
+    diff = diff * sign * sd,
+    index = seq(1:nrow(.))
+  ) %>%
+  select( index, everything() ) %>%
+  mutate( data = pmap(list(size, mean, diff, sd, groups), create_data) )
+```
+
+### 1. Baseline (raw data points)
+
+```{r, scatterplot, fig.width = 9, fig.height = 4}
+data %>%
+  unnest(data) %>%
+  filter(diff == -0.125) %>%
+  ggplot() +
+  geom_point(aes(x = profit, y = region), alpha = 0.5, position = position_jitter(height = 0.1)) +
+  coord_cartesian(xlim = c(0, 4)) +
+  facet_wrap( ~ index )
+```
+
+### 2. Mean
+
+```{r, mean, fig.width = 9, fig.height = 8}
+data %>%
+  unnest(data) %>%
+  #filter(diff == -0.125) %>%
+  group_by(region, index) %>%
+  mean_qi(profit) %>%
+  ggplot() +
+  geom_col(aes(y = profit, x = region)) +
+  facet_wrap( ~ index, ncol = 3 ) +
+  coord_flip()
+```
+
+### 3. Mean + 95% (bootstrapped) CI
+
+```{r}
+bootstrap_mean <- function(x, n = 5000) {
+  x = flatten_dbl(x)
+  
+  iter = 1:n
+  map_dbl(iter, function(.x){
+    set.seed(.x)
+    mean(sample(x, length(x), replace = TRUE))
+  }) 
+}
+
+d = data %>%
+  unnest(data) %>%
+  group_by(index, diff, region) %>%
+  nest(profit) %>%
+  mutate(boot.mean = map(data, bootstrap_mean))
+```
+
+
+```{r, meanci, fig.width = 9, fig.height = 8}
+d %>%
+  unnest(boot.mean) %>%
+  group_by(index, diff, region) %>%
+  mean_qi(boot.mean, .width = c(.67, .95)) %>%
+  ggplot(aes(x = boot.mean, y = region)) +
+  geom_pointintervalh() +
+  coord_cartesian(xlim = c(1, 3)) +
+  facet_wrap( ~ index, ncol = 3 )
+```
+
+### 4. Gradient plot
+
+```{r, gradientplot, fig.width = 12, fig.height = 3}
+d %>%
+  unnest(boot.mean) %>%
+  filter( diff == -0.125 ) %>%
+  ggplot(aes(x = boot.mean, y = region)) +
+  stat_gradientintervalh(fill = "blue", show_interval = FALSE) +
+  scale_alpha_continuous(range = c(0,1))  +
+  coord_cartesian(xlim = c(1, 3)) +
+  facet_wrap( ~ index ) +
+  labs( alpha = "density" )
+```
+
+### 5. Ensemble sample (of bootstrap means)
+
+```{r, bootstrap_ensembles, fig.width = 12, fig.height = 3}
+n_samples = 25
+
+d %>%
+  unnest(boot.mean) %>%
+  group_by(index, diff, region) %>%
+  sample_n(n_samples) %>%
+  filter( diff == -0.125 ) %>%
+  ggplot(aes(x = boot.mean, y = region)) +
+  geom_point(alpha = 0.5, position = position_jitter(height = 0.1)) +
+  facet_wrap( ~ index )
+```
+
+### 6. Hypothetical outcome plots
+
+```{r, hops, fig.width = 12, fig.height = 3}
+d %>%
+  unnest(boot.mean) %>%
+  group_by(index, diff, region) %>%
+  sample_n(n_samples) %>%
+  mutate( mean.index = 1:n_samples) %>%
+  filter( diff == -0.125 ) %>%
+  ggplot(aes(x = boot.mean, y = region)) +
+  geom_point(size = 3) +
+  facet_wrap( ~ index ) +
+  gganimate::transition_manual(mean.index)
+```
+
+### 7. Quantile dotplot
+
+```{r, quantile_dotplot, fig.width = 12, fig.height = 6}
+d %>%
+  unnest(boot.mean)  %>%
+  group_by(index, diff, region) %>%
+  do(tibble(mean = quantile(.$boot.mean, ppoints(20)))) %>%
+  filter( diff == -0.125 ) %>%
+  ggplot(aes(x = mean)) +
+  geom_dotplot(binwidth = .04) +
+  facet_grid( region ~ index )
+```
+
+### 8. Cumulative distribution function
+
+```{r, cdf, fig.width = 12, fig.height = 6}
+n_samples.cdf = 100
+
+endpoints = d %>%
+  select(index, diff, region) %>%
+  mutate(mean = 4, cdf = 1)
+
+d %>%
+  unnest(boot.mean)  %>%
+  group_by(index, diff, region) %>%
+  do(tibble(mean = quantile(.$boot.mean, ppoints(n_samples.cdf)))) %>%
+  mutate( cdf = (1:n_samples.cdf)/n_samples.cdf ) %>%
+  ungroup() %>%
+  rbind(endpoints) %>%
+  filter( diff == -0.125) %>%
+  ggplot(aes(x = mean, y = cdf)) +
+  geom_area() +
+  facet_grid( region ~ index ) +
+  coord_cartesian(xlim = c(1.5, 2.5), ylim = c(0, 1.2)) +
+  scale_y_continuous( breaks = seq(0, 1.5, by = 0.5) )
+```
+
+### 9. Cumulative distribution function + Probability density function
+
+```{r}
+## To-do
+```
+
+
+
+
+## Scenario 2: Correlation
+
+Multivariate gaussian https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/mvrnorm.html
+1. positive correlation 
+2. negative correlation
+3. no correlation
+
+```{r, message = FALSE}
+variance <- 4
+sigmas <- list(
+    matrix(c(1, 0, 0, 1), 2, 2),
+    matrix(c(1, 0.3, 0.3, 1), 2, 2),
+    matrix(c(1, -0.3, -0.3, 1), 2, 2)
+  )
+
+set.seed(100)
+mvt_df = crossing(
+  size = c(50, 100, 200),
+  sigma = sigmas
+) %>%
+  mutate(
+    mean = list(c(3, 1)),
+    j = seq(1:nrow(.)),
+    sigma = map(sigma, ~ .x * variance),
+    mvt_data = pmap(list(size, mean, sigma), ~MASS::mvrnorm(..1, ..2, ..3) %>%
+                  as_tibble(.name_repair = "unique") %>%
+                  rename( "x" = '...1', "y" = "...2" ) %>%
+                  mutate( index = seq(1:nrow(.))))
+  )
+```
+
+### Set of possible insights
+
+1. There is no correlation between x and y (TRUE for 1, 4, 7)
+2. There is a small positive correlation between x and y (TRUE for 2, 5, 8 )
+3. There is a small negative correlation between x and y  (TRUE for 3, 6, 9 )
+
+
+### Baseline
+
+```{r, message = FALSE, fig.width = 12, fig.height = 4}
+n = 100
+
+mvt_df.disaggregated = mvt_df %>%
+  unnest(mvt_data) %>%
+  select(index, everything()) 
+
+mvt_df.disaggregated %>%
+  filter(size == n) %>%
+  ggplot() + 
+  geom_point(aes(x, y)) +
+  facet_wrap( ~ j ) +
+  coord_cartesian( xlim = c(-5, 10), ylim = c(-3, 7))
+```
+
+```{r, results = "hide", message = FALSE}
+mvt_df = mvt_df %>%
+  mutate(fit = map(mvt_data, ~ stan_glm(y ~ x, data = .x)))
+```
+
+
+### 2. Mean regression line
+
+```{r}
+#newdata = data.frame(x = seq(0, 8, by = 0.2))
+mvt.draws = mvt_df %>%
+  mutate(
+    # newdata = map(mvt_data, ~ data_grid(., x = seq_range(.$x, n = 21))),
+    newdata = list(tibble(x = seq(-5, 9, by = 0.2))),
+    means = map2(newdata, fit, ~ add_fitted_draws(.x, .y))
+  )
+```
+
+
+```{r, fig.width = 12, fig.height = 4}
+mvt.draws  %>%
+  filter( size == n ) %>%
+  unnest(means, .preserve = c(size, sigma, mean, mvt_data)) %>%
+  ggplot() +
+  stat_lineribbon(aes(x = x, y = .value), .width = 0) +
+  scale_fill_brewer() +
+  coord_cartesian( xlim = c(-5, 10), ylim = c(-4, 7)) +
+  facet_wrap( ~ j )
+```
+
+```{r, fig.width = 12, fig.height = 4}
+mvt.draws  %>%
+  filter( size == n ) %>%
+  unnest(means, .preserve = c(size, sigma, mean, mvt_data)) %>%
+  ggplot() +
+  stat_lineribbon(aes(x = x, y = .value), .width = 0) +
+  geom_point(data = filter(mvt_df.disaggregated, size == n), aes(x, y), alpha = 0.4) +
+  scale_fill_brewer() +
+  coord_cartesian( xlim = c(-5, 10), ylim = c(-4, 7)) +
+  facet_wrap( ~ j )
+```
+
+
+```{r, fig.width = 12, fig.height = 4}
+mvt.draws  %>%
+  filter( size == 50 ) %>%
+  unnest(means, .preserve = c(size, sigma, mean, mvt_data)) %>%
+  ggplot() +
+  stat_lineribbon(aes(x = x, y = .value)) +
+  scale_fill_brewer() +
+  coord_cartesian( xlim = c(-5, 10), ylim = c(-4, 7)) +
+  facet_wrap( ~ j )
+```
+
+
+```{r, fig.width = 12, fig.height = 4}
+mvt_ensembles = mvt_df %>%
+  filter( size == 50 ) %>%
+  mutate(
+    # newdata = map(mvt_data, ~ data_grid(., x = seq_range(.$x, n = 21))),
+    newdata = list(tibble(x = seq(-5, 9, by = 0.2))),
+    means = map2(newdata, fit, ~ add_fitted_draws(.x, .y, n = 100))
+  ) %>%
+  unnest(means, .preserve = c(size, sigma, mean, mvt_data))
+
+mvt_ensembles %>%
+  ggplot() +
+  geom_line(aes(x = x, y = .value, group = .draw), alpha = 0.1, color = "#08519C") +
+  #geom_point() +
+  coord_cartesian( xlim = c(-5, 10), ylim = c(-4, 7)) +
+  facet_wrap( ~ j)
+```
+
+```{r, fig.width = 12, fig.height = 4}
+p <- mvt_ensembles %>%
+  filter(j == 1) %>%  
+  ggplot() +
+  geom_line(aes(x = x, y = .value, group = .draw), color = "#08519C") +
+  coord_cartesian( xlim = c(-5, 10), ylim = c(-4, 7)) +
+  #geom_point() +
+  gganimate::transition_manual( .draw )
+
+gganimate::animate(p, fps = 3)
+```
+

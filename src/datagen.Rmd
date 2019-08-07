@@ -138,7 +138,6 @@ stat_df <- sampled_normal %>%
   ungroup() %>%
   mutate(low = mean - se_fn) %>%
   mutate(high = mean + se_fn) 
-
 ```
 
 
@@ -147,7 +146,7 @@ fig_fname <- gen_fig_name(task_cond, technique_cond, data_cond, trial_n)
 
 
 ggplot(sampled_normal, aes(x = region, y = profit)) + 
-  geom_violin() + 
+  # geom_violin() + 
   # geom_quasirandom() + 
   geom_pointrange(data = stat_df, mapping = aes(x= region, y = mean, ymin=low, ymax = high)) + 
   NULL
@@ -183,7 +182,7 @@ fig_fname <- paste0(paste(c(task_cond, technique_cond, trial_n), collapse = "_")
 
 ggplot(sample_normal_boots) +
   geom_quasirandom(aes(region, profit))  +
-  transition_time(sample)
+  transition_manual(sample)
 ```
 
 ## Superimposed ensembles
@@ -197,7 +196,6 @@ stat_boots <- sample_normal_boots %>%
   ungroup() %>%
   mutate(low = mean - se_fn) %>%
   mutate(high = mean + se_fn) 
-
 ```
 
 Beam me up, Scotty
@@ -385,8 +383,6 @@ sigma <- switch(data_cond,
 
 mvn_df <- data.frame(mvrnorm(n = n_obs, c(2, 10), sigma))
 names(mvn_df) <- c("profit", "time")
-mvn_df$profit <- mvn_df$profit 
-
 ```
 
 

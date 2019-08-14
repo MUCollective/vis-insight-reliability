@@ -71,9 +71,9 @@ data.sim <- crossing(
     trial = seq(1:ntrials),
     region.idx = seq(1:nregions),
     product = factor( LETTERS[1:nproducts] ),
-    a_bar = 3,
-    sigma = sd,
-    sigma_group = sd * 2
+    a_bar = 4,
+    sigma = sd * 4,
+    sigma_group = sd
   ) %>%
   mutate( 
     region = map2_chr(trial, region.idx, function(.x, .y) {
@@ -84,7 +84,7 @@ data.sim <- crossing(
   mutate(
     mu_region = rep(rep(rnorm(nregions, 0, sigma_group), each = nproducts), ntrials),
     mu_product = rep(rnorm(nproducts, 0, 1), nregions * ntrials),
-    true_mu = rnorm(N, a_bar, sigma) + mu_product + mu_region,
+    true_mu = rnorm(N, a_bar, sigma_group) + mu_product + mu_region,
     sd = sigma / sqrt(Ni),
     profit = map2( true_mu, sigma, ~rnorm(Ni, .x, .y))
   )
@@ -92,7 +92,7 @@ data.sim <- crossing(
 
 ### 1. Raw data
 
-```{r, plot-raw, fig.width = 12, fig.height = 6}
+```{r, gen-data-raw, fig.width = 12, fig.height = 5}
 for(i in 1:ntrials) {
     p <- data.sim %>%
         filter( trial == i) %>%
@@ -100,19 +100,23 @@ for(i in 1:ntrials) {
         ggplot() +
         geom_point( aes(x = product, y = profit), position = position_jitter(width = 0.1), alpha = 0.5 ) +
         facet_wrap( ~region ) +
-        coord_cartesian( ylim = c(-1, 8)) +
+        coord_cartesian( ylim = c(-4, 12)) +
         ggtitle( "Profit (for each of the past 25 weeks) for products A - E in regions K - N" )
     
-    ggsave(filename = paste0('../plots/raw-data/profits-', i, '.png'), plot = p, device = "png")
+    ggsave(filename = paste0('../plots/raw-data/profits-', i, '.png'), height = 18, width = 9, units = "in", dpi = 72, plot = p, device = "png")
 }
+```
 
+
+```{r, plot-data-raw, fig.width = 12, fig.height = 5}
 p
 ```
 
 ### 2. Mean
 
-```{r, plot-mean-bar, fig.width = 7, fig.height = 3}
+```{r, plot-mean-bar, fig.width = 12, fig.height = 5}
 data.sim %>%
+  filter( trial == 1 ) %>%
   mutate( .value = map_dbl(profit, mean)) %>%
   ggplot(aes(x = product, y = .value)) +
   geom_col() +
@@ -131,37 +135,48 @@ bootstrap_mean <- function(x, n = 5000) {
     mean(sample(x, length(x), replace = TRUE))
   }) 
 }
+
+data.sim.boot = data.sim %>%
+  mutate( boot.mean = map(profit, bootstrap_mean))
 ```
 
 ### 3. Ensemble sample of means
 
-```{r, plot-mean-ensemble, fig.width = 7, fig.height = 3}
-data.sim.boot = data.sim %>%
-  mutate( boot.mean = map(profit, bootstrap_mean))
-
+```{r, plot-mean-ensemble, fig.width = 12, fig.height = 5}
 data.sim.boot %>%
+  filter(trial == 1) %>%
   mutate( .value = map(boot.mean, ~sample(.x, 50))) %>%
   unnest( .value ) %>%
   ggplot(aes(x = product, y = .value)) +
   geom_point( position = position_jitter(width = 0.2), alpha = 0.5 ) +
+  coord_cartesian( ylim = c(0, 6) ) +
   facet_grid( . ~ region ) +
-  coord_cartesian( ylim = c(0, 4)) +
   ggtitle( "Mean profit (over the past 50 weeks) for products A - E in regions K - N" )
 ```
 
 ### 4. Mean + 95% confidence intervals
 
-```{r, plot-mean-ci, fig.width = 7, fig.height = 3}
-data.sim.boot %>%
-  unnest( boot.mean ) %>%
-  group_by(product, region) %>%
-  mean_qi(boot.mean, .width = .95) %>%
-  ggplot(aes(y = boot.mean, x = product)) +
-  geom_pointinterval() +
-  coord_cartesian( ylim = c(0, 4)) +
-  facet_wrap( ~ region, ncol = 4 ) +
-  ggtitle( "Mean profit (over the past 50 weeks) for products A - E in regions K - N" )
+```{r, gen-mean-ci, fig.width = 12, fig.height = 5}
+for(i in 1:ntrials) {
+    p <- data.sim.boot %>%
+        filter(trial == i) %>%
+        unnest( boot.mean ) %>%
+        group_by(product, region) %>%
+        mean_qi(boot.mean, .width = .95) %>%
+        ggplot(aes(y = boot.mean, x = product)) +
+        geom_pointinterval() +
+        coord_cartesian( ylim = c(0, 6)) +
+        facet_wrap( ~ region, ncol = 4 ) +
+        ggtitle( "Mean profit (over the past 50 weeks) for products A - E in regions K - N" )
+    
+    ggsave(filename = paste0('../plots/mean-ci/profits-', i, '.png'), height = 18, width = 9, units = "in", dpi = 72, plot = p, device = "png")
+}
 ```
+
+```{r, plot-mean-ci, fig.width = 12, fig.height = 5}
+p
+```
+
 
 ### 5. Gradient plots
 

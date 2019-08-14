@@ -167,9 +167,9 @@ for(i in 1:ntrials) {
         geom_pointinterval() +
         coord_cartesian( ylim = c(0, 6)) +
         facet_wrap( ~ region, ncol = 4 ) +
-        ggtitle( "Mean profit (over the past 50 weeks) for products A - E in regions K - N" )
+        ggtitle( "Mean profit (over the past 25 weeks) for products A - E in different regions" )
     
-    ggsave(filename = paste0('../plots/mean-ci/profits-', i, '.png'), height = 9, width = 16, units = "in", dpi = 72, plot = p, device = "png")
+    ggsave(filename = paste0('../plots/mean-ci/profits-', i, '.png'), height = 4.5, width = 8, units = "in", dpi = 150, plot = p, device = "png")
 }
 ```
 

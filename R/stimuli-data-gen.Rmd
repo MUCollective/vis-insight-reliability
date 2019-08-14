@@ -103,7 +103,7 @@ for(i in 1:ntrials) {
         coord_cartesian( ylim = c(-4, 12)) +
         ggtitle( "Profit (for each of the past 25 weeks) for products A - E in regions K - N" )
     
-    ggsave(filename = paste0('../plots/raw-data/profits-', i, '.png'), height = 18, width = 9, units = "in", dpi = 72, plot = p, device = "png")
+    ggsave(filename = paste0('../plots/raw-data/profits-', i, '.png'), height = 9, width = 16, units = "in", dpi = 72, plot = p, device = "png")
 }
 ```
 
@@ -169,7 +169,7 @@ for(i in 1:ntrials) {
         facet_wrap( ~ region, ncol = 4 ) +
         ggtitle( "Mean profit (over the past 50 weeks) for products A - E in regions K - N" )
     
-    ggsave(filename = paste0('../plots/mean-ci/profits-', i, '.png'), height = 18, width = 9, units = "in", dpi = 72, plot = p, device = "png")
+    ggsave(filename = paste0('../plots/mean-ci/profits-', i, '.png'), height = 9, width = 16, units = "in", dpi = 72, plot = p, device = "png")
 }
 ```
 

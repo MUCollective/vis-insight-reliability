@@ -1,0 +1,271 @@
+---
+title: "P value payoff schemes"
+output:  
+  html_document:
+    toc: TRUE
+---
+
+This is an attempt to sort out the relationship between p values and payoff schemes.
+
+## Setup
+
+```{r setup, warning = FALSE, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidybayes)
+library(purrr)
+library(tidyr)
+library(gganimate)
+library(ggrepel)
+```
+
+## Analytical payoff expectations
+
+**NOTE: There is an error in here somewhere as it does not currently match the simulated output**
+
+Here we'll try to derive what the expected payoff is given a particular strategy and the probability that the null is true. "strategies" in this case refer to choosing to reject at a given alpha level and p value correction (such as "raw"---no correction---Bonferronni, Benjamini-Hochberg, etc).
+
+We'll start by deriving the expected payoff in terms of the expected number of entries in each of the four corners of the confusion matrix:
+
+$$
+\begin{align}
+p_{null} &: \textit{prior probability of the null} \\
+n &: \textit{number of choices the user must make (number of stimuli)} \\
+n_{greater} &: \textit{number of the stimuli where true mean is greater than 0} \\
+n_{reject} &: \textit{number of the stimuli where user says the mean is greater} \\
+\\
+n &= n_{greater\land reject} + n_{\neg greater \land reject} + n_{greater \land \neg reject} + n_{\neg greater \land \neg reject}  \\
+\\
+FDR &= E\left[\frac{n_{greater \land reject}}{n_{reject}} \middle| n_{reject} > 0 \right]P(n_{reject} > 0) \\
+payoff &= 1000n_{greater\land reject} - 19000n_{\neg greater \land reject} - 1000n_{greater \land \neg reject} + 1000n_{\neg greater \land \neg reject}\\
+E\left[payoff\right] &= 1000E\left[n_{greater\land reject}\right] - 19000E\left[n_{\neg greater \land reject}\right] - 1000E\left[n_{greater \land \neg reject}\right] + 1000E\left[n_{\neg greater \land \neg reject}\right]  \\
+\\
+E\left[n_{greater\land reject}\right|n] &=
+   E\left[n_{greater\land reject}\right|n,null]P(null) +
+   E\left[n_{greater\land reject}\right|n,\neg null]P(\neg null) \\
+ &= E\left[n_{reject}\right|n,\neg null]P(\neg null)\\
+ &= nP(p<\alpha|strategy,\neg null)P(\neg null)\\
+E\left[n_{\neg greater\land reject}\right|n] &=
+   E\left[n_{\neg greater\land reject}\right|n,null]P(null) +
+   E\left[n_{\neg greater\land reject}\right|n,\neg null]P(\neg null) \\
+ &= E\left[n_{reject}\right|n,null]P(null) \\
+ &= nP(p<\alpha|strategy,null)P(null)\\
+E\left[n_{greater\land \neg reject}\right|n] &=
+   E\left[n_{greater\land \neg reject}\right|n,null]P(null) +
+   E\left[n_{greater\land \neg reject}\right|n,\neg null]P(\neg null) \\
+ &= E\left[n_{\neg reject}\right|n,\neg null]P(\neg null) \\
+ &= nP(p \ge \alpha|strategy,\neg null)P(\neg null)\\
+E\left[n_{\neg greater\land \neg reject}\right|n] &=
+   E\left[n_{\neg greater\land \neg reject}\right|n,null]P(null) +
+   E\left[n_{\neg greater\land \neg reject}\right|n,\neg null]P(\neg null) \\
+ &= E\left[n_{\neg reject}\right|n,null]P(null) \\
+ &= nP(p \ge \alpha|strategy,null)P(null)
+\\
+\end{align}
+$$
+
+For p values under the null hypothesis and the "raw" p value strategy, those expectations are:
+
+$$
+\begin{align}
+  p|strategy=raw, null &\sim \textrm{uniform}(0,1) & \textrm{by definition of p values under null}\\
+  \\
+  E\left[n_{\neg greater\land reject}\right|n,strategy=raw]
+   &= nP(p<\alpha|strategy=raw,null)P(null)\\
+   &= n\alpha P(null) \\
+  E\left[n_{\neg greater\land \neg reject}\right|n,strategy=raw]
+   &= nP(p \ge \alpha|strategy=raw,null)P(null) \\
+   &= n(1 - \alpha) P(null) \\
+  \\
+\end{align}
+$$
+
+When the null is false with a sample size of $K$, we have the following density function ($f_p$) and distribution function ($F_p$) for the distribution of the p value when the null is false, based on H. M. James Hung, Robert T. O'Neill, Peter Bauer, and Karl Kohne. The Behavior of the P-Value When the Alternative Hypothesis Is True. _Biometrics_ 53, no. 1 (1997): 11-22. [doi:10.2307/2533093](http://doi.org/10.2307/2533093).
+
+$$
+\begin{align}
+  Y &\sim \textrm{normal}\left(\mu,\sigma \right) \\
+  \\
+  f_p(x|\mu,\sigma,K) 
+    &= \frac{\phi\left( \Phi^{-1}(1 - x) - \sqrt{K}\frac{\mu}{\sigma} \right)}{\phi\left(\Phi^{-1}(1 - x)\right)}
+    & \textrm{(Hung at el. 1997)}\\
+  F_p(x|\mu,\sigma,K) 
+    &= 1 - \Phi\left(\Phi^{-1}(1 - x) - \sqrt{K}\frac{\mu}{\sigma} \right)
+    & \textrm{(Hung at el. 1997)}
+\end{align}
+$$
+
+Which means:
+
+$$
+\begin{align}
+  p|strategy=raw, \neg null &\sim F_p(x|\mu,\sigma,K) & \textrm{defined as above}\\
+  \\
+  E\left[n_{greater\land reject}\right|n,strategy=raw]
+   &= nP(p<\alpha|strategy=raw,\neg null)P(\neg null)\\
+   &= nF_p(\alpha|\mu,\sigma,K)P(\neg null)\\
+  E\left[n_{greater\land \neg reject}\right|n,strategy=raw]
+   &= nP(p \ge \alpha|strategy=raw,\neg null)P(\neg null)\\
+   &= n\left(1 - F_p(\alpha|\mu,\sigma,K)\right)P(\neg null)\\
+\end{align}
+$$
+
+Thus the expected payoff for the "raw" strategy is:
+
+$$
+\begin{align}
+  E\left[payoff\right|n,strategy = raw] 
+    &= 
+      1000E\left[n_{greater\land reject}\right] 
+      - 19000E\left[n_{\neg greater \land reject}\right] 
+      - 1000E\left[n_{greater \land \neg reject}\right] 
+      + 1000E\left[n_{\neg greater \land \neg reject}\right]  \\
+   &=
+      1000nF_p(\alpha|\mu,\sigma,K)P(\neg null)
+      - 19000n\alpha P(null) 
+      - 1000n\left(1 - F_p(\alpha|\mu,\sigma,K)\right)P(\neg null)
+      + 1000n(1 - \alpha) P(null)  \\
+\end{align}
+$$
+
+We'll define this as an R function for comparison later:
+
+```{r}
+f_p = function(x, mu, sigma, K) {
+  dnorm(qnorm(1 - x) - sqrt(K) * mu / sigma) / dnorm(qnorm(1 - x))
+}
+F_p = function(x, mu, sigma, K) {
+  1 - pnorm(qnorm(1 - x) - sqrt(K) * mu / sigma)
+}
+
+E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
+  1000 * n * F_p(alpha, mu, sigma, K) * (1 - p_null) +
+    -19000 * n * alpha * p_null +
+    -1000 * n * (1 - F_p(alpha, mu, sigma, K)) * (1 - p_null) +
+    1000 * n * (1 - alpha) * p_null
+}
+```
+
+## Simulations of payoffs
+
+Set up the simulation:
+
+```{r}
+alpha = .05
+n_panels = 10
+n_obs = 10
+k = 5000
+
+calc_rates = function(prior_prob_null) {
+  prior_prob_greater = 1 - prior_prob_null
+  
+  tibble(
+    panel = rep(1:n_panels, times = k),
+    run = rep(1:k, each = n_panels),
+    true_mu = rbinom(n_panels * k, 1, prior_prob_greater),
+    actually_greater = true_mu > 0,
+    obs = map(true_mu, rnorm, n = n_obs),
+    p_raw = map_dbl(obs, ~ t.test(.x, alternative = "greater")$p.value)
+  ) %>%
+    group_by(run) %>%
+    mutate(
+      p_bh = p.adjust(p_raw, method = "BH"), # Benjamini-Hochberg FDR correction
+      p_bonf = p.adjust(p_raw, method = "bonferroni"),
+      p_all = 0,
+      p_none = 1,
+      p_one = ifelse(p_raw == min(p_raw), 0, 1)
+    ) %>%
+    gather(p_type, p, p_raw, p_bh, p_bonf, p_all, p_none, p_one) %>%
+    mutate(
+      decide_greater = p < alpha
+    ) %>%
+    group_by(p_type, run) %>%
+    summarise(
+      n_rejections = sum(decide_greater),
+      fdr = ifelse(n_rejections > 0, sum(!actually_greater & decide_greater) / n_rejections, 0),
+      any_false_rejection = any(!actually_greater & decide_greater),
+      payout = sum(
+          ( actually_greater &  decide_greater) *  1000
+        + (!actually_greater &  decide_greater) * -19000
+        + ( actually_greater & !decide_greater) * -1000
+        + (!actually_greater & !decide_greater) *  1000
+      ),
+      fdr_payout = sum(
+        (actually_greater & decide_greater)  * 1000 +
+        (!actually_greater & decide_greater) * -19000
+      ),
+      fwer_payout = ifelse(any_false_rejection, -19000, 1000) * n_rejections
+    ) %>%
+    group_by(p_type) %>%
+    summarise(
+      fdr = mean(fdr),
+      fwer = mean(any_false_rejection),
+      mean_payout = mean(payout),
+      mean_fdr_payout = mean(fdr_payout),
+      mean_fwer_payout = mean(fwer_payout),
+      mean_n = mean(n_rejections)
+    )
+}
+  
+calc_rates(prior_prob_null = .5)
+```
+
+Run the simulation over a number of different prior probabilities of the null:
+
+```{r}
+rates_df = tibble(
+  prior_prob_null = ppoints(20),
+  rates = map(prior_prob_null, calc_rates)
+) %>%
+  unnest(rates)
+
+head(rates_df)
+```
+
+### FDR and FWER
+
+Let's verify that the multiple comparisons procedures do control FDR (false discovery rate). As expected, Benjamini-Hochberg and Bonferroni do control FDR:
+
+```{r}
+rates_df %>%
+  ggplot(aes(x = prior_prob_null, y = fdr, color = p_type)) +
+  geom_line() +
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_label_repel(aes(label = p_type), data = . %>% group_by(p_type) %>% slice(n())) +
+  coord_cartesian(ylim = c(0, .1))
+```
+
+Only Bonferroni controls familywise error rate (FWER):
+
+```{r}
+rates_df %>%
+  ggplot(aes(x = prior_prob_null, y = fwer, color = p_type)) +
+  geom_line() +
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_label_repel(aes(label = p_type), data = . %>% group_by(p_type) %>% slice(n())) +
+  coord_cartesian(ylim = c(0, .2))
+```
+
+### Payoffs
+
+Mean payoff by incentive structure and p value correction type:
+
+```{r}
+rates_df %>%
+  gather(payout_type, payout, mean_payout, mean_fdr_payout, mean_fwer_payout) %>%
+  filter(p_type != "p_all") %>%
+  ggplot(aes(x = prior_prob_null, y = payout, color = p_type)) +
+  geom_line() +
+  facet_wrap(~ payout_type) +
+  stat_function(aes(color = "p_raw"), 
+    fun = ~ E_payoff_raw(alpha, n = n_panels, p_null = .x, mu = 1, sigma = 1, K = n_obs), 
+    linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
+  stat_function(aes(color = "p_bonf"), 
+    fun = ~ E_payoff_raw(alpha / n_panels, n = n_panels, p_null = .x, mu = 1, sigma = 1, K = n_obs), 
+    linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
+  coord_cartesian(ylim = c(-6000, 10000))
+```
+
+We can see that under the incentive structure that uses all four corners of the payoff matrix (`mean_payout` column), the Benjamini-Hochberg procedure seems to do well overall.
+
+We can also see from the dashed lines that the analytical solution does not quite line up with this.

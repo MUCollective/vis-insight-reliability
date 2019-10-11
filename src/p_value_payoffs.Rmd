@@ -269,3 +269,15 @@ rates_df %>%
 We can see that under the incentive structure that uses all four corners of the payoff matrix (`mean_payout` column), the Benjamini-Hochberg procedure seems to do well overall.
 
 We can also see from the dashed lines that the analytical solution does not quite line up with this.
+
+And here are the payouts averaged over the prior probability of the null:
+
+```{r}
+rates_df %>%
+  gather(payout_type, payout, mean_payout, mean_fdr_payout, mean_fwer_payout) %>%
+  group_by(p_type, payout_type) %>%
+  summarise(payout = mean(payout)) %>%
+  spread(payout_type, payout)
+```
+
+We see that Benjamini-Hochberg does best with the FDR payout scheme (the two corners) and the payout scheme with all parts of the confusion matrix incentivized (last column). Bonferroni does best with the FWER payout scheme (all-or-nothing payout based on the number of rejections and whether they were all correct rejections or not).

@@ -23,7 +23,7 @@ library(brms)
 library(tidybayes)
 library(emmeans)
 library(ggstance)
-library(transformr)
+library(transformr) 
 
 ```
 
@@ -447,8 +447,12 @@ corr_fits %>%
   geom_line(aes(y = .value, group = .draw)) + 
   geom_point(data = mvn_samples_df) +
   scale_color_brewer(palette = "Dark2") + 
-  transition_states(.draw, 0,1)
-  NULL
+  transition_states(.draw, 0,1) +
+  shadow_mark(future = TRUE, color = "gray50", alpha = 1/20) 
+
+# ndraws = 50
+# animate(p, nframes = ndraws, fps = 2.5, width = 576, height = 384, res = 96, type = "cairo")
+
 ```
 
 
@@ -456,7 +460,7 @@ corr_fits %>%
 
 
 
-## Superimpsed ensemble
+## Superimposed ensemble
 
 ```{r}
 n_ensemble_members <- 4
@@ -480,9 +484,13 @@ ggplot(mvn_samples_df,
   geom_smooth(method = "lm", aes(fill = factor(sample)))
 ```
 
-
+## Juxtaposed ensemble
 
 ```{r}
-
+ggplot(mvn_samples_df,
+       aes(profit, time)) +
+  geom_point(aes(color = factor(sample))) +
+  geom_smooth(method = "lm", aes(fill = factor(sample))) +
+  facet_wrap(.~sample)
 ```
 

@@ -47,13 +47,13 @@ n_stores = 100
 n_regions = 10
 baseline = 0
 
-p_h1 = c(seq(5, 9))
+p_h1_levels = c(seq(5, 9))
 sd = seq(2, 3, 5)
 
 data.sim <- crossing( 
     trial = seq(1:k),
     baseline = baseline,
-    p_h1 = p_h1,
+    p_h1 = p_h1_levels,
     sd = sd
   ) %>%
   mutate( 
@@ -66,6 +66,8 @@ data.sim <- crossing(
     region_idx = rep(1:10, 50),
     data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
   )
+
+p_h1_levels = p_h1_levels / 10
 ```
 
 ```{r, fig.width = 12, fig.height = 8}
@@ -101,15 +103,17 @@ data.sample %>%
 
 ```{r, scatterplot, fig.width = 10, fig.height = 4, warning = FALSE}
 for(i in 1:n_regions) {
-  p <- data.sample %>%  
-    unnest( cols = c(profit, store_idx) ) %>%
-    filter( trial == 1 & p_h1 == 0.5 & region_idx == i ) %>%
-    ggplot(aes(x = NA, y = profit)) + 
-    geom_jitter(width = 0.2, alpha = 0.5, colour = "red") + 
-    # facet_wrap( ~ region, ncol = 5 ) +
-    geom_hline( yintercept = 0, color = "red", alpha = 0.5 )
-  
-  ggsave(filename = paste0('../plots/raw-data/profits-', i, '.png'), height = 6, width = 9, units = "in", dpi = 150, plot = p, device = "png")
+  for(j in 1:length(p_h1_levels)) {
+    p <- data.sample %>%  
+      unnest( cols = c(profit, store_idx) ) %>%
+      filter( trial == 1 & p_h1 == p_h1_levels[j] & region_idx == i ) %>%
+      ggplot(aes(x = NA, y = profit)) + 
+      geom_jitter(width = 0.2, alpha = 0.5, colour = "red") + 
+      # facet_wrap( ~ region, ncol = 5 ) +
+      geom_hline( yintercept = 0, color = "red", alpha = 0.5 )
+    
+    ggsave(filename = paste0('../plots/raw-data/profits-p_', p_h1_levels[j], '-', i, '.png'), height = 6, width = 9, units = "in", dpi = 150, plot = p, device = "png")
+  }
 }
 ```
 

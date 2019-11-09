@@ -16,7 +16,6 @@ library(modelr)
 library(tidybayes)
 ```
 
-
 ## Stimuli
 
 We are using the following stimuli to test:
@@ -127,6 +126,7 @@ We then sample using this data generation process to get the simulated data set.
 
 ```{r, data-generation}
 set.seed(74124)
+nproducts = 10
 mu_region = rep(rnorm(nregions * ntrials, 0, sd), each = nproducts)
 mu_product = rep(rnorm(nproducts * ntrials, 0, 1), nregions)
 

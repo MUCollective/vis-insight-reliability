@@ -99,16 +99,22 @@ data.sample %>%
   #scale_x_continuous( breaks = seq(0, 10, by = 2))
 ```
 
-
 ```{r}
 data.sample %>%  
   unnest( cols = c(profit, store_idx) ) %>%
   filter( trial == 1 & p_h1 == p_h1_levels[j] & region_idx == i ) %>%
   ggplot(aes(x = NA, y = profit)) + 
-  geom_jitter(size = 3, width = 0.1, alpha = 0.5, colour = "red") + 
+  geom_jitter(size = 4, width = 0.2, alpha = 0.5, colour = "red") + 
   # facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  ylim(c(-6, 6))
+  ylim(c(-6, 6)) +
+  theme( 
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text( size = 12 ),
+    axis.title.y = element_text( size = 14 )
+  )
 ```
 
 
@@ -121,10 +127,16 @@ for(i in 1:n_regions) {
       unnest( cols = c(profit, store_idx) ) %>%
       filter( trial == 1 & p_h1 == p_h1_levels[j] & region_idx == i ) %>%
       ggplot(aes(x = NA, y = profit)) + 
-      geom_jitter(width = 0.2, alpha = 0.5, colour = "red") + 
-      # facet_wrap( ~ region, ncol = 5 ) +
+      geom_jitter(size = 4, width = 0.2, alpha = 0.5, colour = "red") + 
       geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-      ylim(c(-6, 6))
+      ylim(c(-6, 6)) +
+      theme( 
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text( size = 12 ),
+        axis.title.y = element_text( size = 14 )
+      )
     
     ggsave(filename = paste0('../plots/raw-data/profits-p_', p_h1_levels[j], '-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
   }

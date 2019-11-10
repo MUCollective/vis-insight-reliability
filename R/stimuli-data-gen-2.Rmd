@@ -95,13 +95,26 @@ data.sample %>%
   geom_col() + 
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  scale_x_continuous( breaks = seq(0, 10, by = 2))
+  ylim(c(-6, 6))
+  #scale_x_continuous( breaks = seq(0, 10, by = 2))
+```
+
+
+```{r}
+data.sample %>%  
+  unnest( cols = c(profit, store_idx) ) %>%
+  filter( trial == 1 & p_h1 == p_h1_levels[j] & region_idx == i ) %>%
+  ggplot(aes(x = NA, y = profit)) + 
+  geom_jitter(size = 3, width = 0.1, alpha = 0.5, colour = "red") + 
+  # facet_wrap( ~ region, ncol = 5 ) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  ylim(c(-6, 6))
 ```
 
 
 ### 1.1. Scatterplot of raw data with jitter
 
-```{r, scatterplot, fig.width = 10, fig.height = 4, warning = FALSE}
+```{r, scatterplot, fig.width = 3, fig.height = 4, warning = FALSE}
 for(i in 1:n_regions) {
   for(j in 1:length(p_h1_levels)) {
     p <- data.sample %>%  
@@ -110,9 +123,10 @@ for(i in 1:n_regions) {
       ggplot(aes(x = NA, y = profit)) + 
       geom_jitter(width = 0.2, alpha = 0.5, colour = "red") + 
       # facet_wrap( ~ region, ncol = 5 ) +
-      geom_hline( yintercept = 0, color = "red", alpha = 0.5 )
+      geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+      ylim(c(-6, 6))
     
-    ggsave(filename = paste0('../plots/raw-data/profits-p_', p_h1_levels[j], '-', i, '.png'), height = 6, width = 9, units = "in", dpi = 150, plot = p, device = "png")
+    ggsave(filename = paste0('../plots/raw-data/profits-p_', p_h1_levels[j], '-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
   }
 }
 ```

@@ -12,7 +12,7 @@
 	<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet">
 
 	<!-- Custom CSS -->
-	<link href="css/custom.css" rel="stylesheet">
+	<!-- <link href="css/custom.css" rel="stylesheet"> -->
 
 	<!-- Custom Fonts -->
 	<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" type="text/css">
@@ -20,83 +20,141 @@
 	<!-- Custom JavaScript -->
 	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
 	<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
-	<script src="https://d3js.org/d3.v4.min.js"></script>
+	<!-- <script src="https://d3js.org/d3.v4.min.js"></script> -->
 	<style>
 		.question-container {
-			padding: 6px;
+			padding: 4px;
+			margin: 20px 0px;
 		}
 
 		.question-graphic {
 			max-width: 100%;
 		}
+
+		.selected {
+			background: #3CA8FF; 
+		}
 	</style>
+	<script>
+		conditions = ["raw-data", "ci", "halfeye"];
+		levels = [0.5, 0.6, 0.7, 0.8, 0.9];
+
+		i_condition = Math.floor(Math.random() * conditions.length);
+		i_level = Math.floor(Math.random() * levels.length);
+
+		console.log(conditions[i_condition]);
+
+		url = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/"+ conditions[i_condition] +"/profits-p_";
+	</script>
 </head>
 
 <body>
-	<div class="container">
-		<div class="col-lg-12 col-sm-12">
-			You are supervising the sales of a group of stores across 10 regions. Each region has 200 stores. You want to find out if the stores are making a profit in each region. However, you only have the data for 10 randomly selected stores from the 200 stores in each region.
+	<div class = "row">
+		<div class="container">
+			<div class="col-lg-12 col-sm-12">
+				You are supervising the sales of a group of stores across 10 regions. Each region has 200 stores. You want to find out if the stores are making a profit in each region. However, you only have the data for 10 randomly selected stores from the 200 stores in each region.
 
-			Below, we show the profit for these 10 stores.
+				Below, we show the profit for these 10 stores.
 
-			Indicate which of these regions are making a profit.
+				Indicate which of these regions are making a profit.
+			</div>
 		</div>
 	</div>
-	<div class="container">
-		<div class="col-lg-3">
-			<div class = "question-container"> 
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-1.png">
+	<div class = "row">
+		<div class="container-fluid">
+			<div class="col-lg-2 col-sm-3 col-lg-offset-1">
+				<div class = "question-container" id = "opt-1"> 
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-2">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-3">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-4">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-5">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3 col-lg-offset-1">
+				<div class = "question-container" id = "opt-6">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-7">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-8">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-9">
+					<img class = "question-graphic">
+				</div>
+			</div>
+			<div class="col-lg-2 col-sm-3">
+				<div class = "question-container" id = "opt-10">
+					<img class = "question-graphic">
+				</div>
 			</div>
 		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-2.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-3.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-4.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-5.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-6.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-7.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-8.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-9.png">
-			</div>
-		</div>
-		<div class="col-lg-3">
-			<div class = "question-container">
-				<img class = "question-graphic" src = "https://raw.githubusercontent.com/MUCollective/vis-insight-reliability/stimuli/plots/raw-data/profits-p_0.5-10.png">
-			</div>
-		</div>
+	</div>
+	<div class = "row">
 	</div>
 <body>
 
 	<script>
+		function shuffle(array) {
+			var n = array.length, t, i;
+			while (n) {
+				i = Math.random() * n-- | 0;
+				t = array[n];
+				array[n] = array[i];
+				array[i] = t;
+			}
+			return array;
+		}
+
+		var selected = [];
+		var img_order = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+		$("div#opt-1").children().attr("src", url + levels[i_level] + "-" + img_order[0] + ".png");
+		$("div#opt-2").children().attr("src", url + levels[i_level] + "-" + img_order[1] + ".png");
+		$("div#opt-3").children().attr("src", url + levels[i_level] + "-" + img_order[2] + ".png");
+		$("div#opt-4").children().attr("src", url + levels[i_level] + "-" + img_order[3] + ".png");
+		$("div#opt-5").children().attr("src", url + levels[i_level] + "-" + img_order[4] + ".png");
+		$("div#opt-6").children().attr("src", url + levels[i_level] + "-" + img_order[5] + ".png");
+		$("div#opt-7").children().attr("src", url + levels[i_level] + "-" + img_order[6] + ".png");
+		$("div#opt-8").children().attr("src", url + levels[i_level] + "-" + img_order[7] + ".png");
+		$("div#opt-9").children().attr("src", url + levels[i_level] + "-" + img_order[8] + ".png");
+		$("div#opt-10").children().attr("src", url + levels[i_level] + "-" + img_order[9] + ".png");
+
+		// $("img#opt-1").attr("src", url + levels[i_level] + "-1.png");
+		// $("img#opt-2").attr("src", url + levels[i_level] + "-2.png");
+		// $("img#opt-3").attr("src", url + levels[i_level] + "-3.png");
+		// $("img#opt-4").attr("src", url + levels[i_level] + "-4.png");
+		// $("img#opt-5").attr("src", url + levels[i_level] + "-5.png");
+		// $("img#opt-6").attr("src", url + levels[i_level] + "-6.png");
+		// $("img#opt-7").attr("src", url + levels[i_level] + "-7.png");
+		// $("img#opt-8").attr("src", url + levels[i_level] + "-8.png");
+		// $("img#opt-9").attr("src", url + levels[i_level] + "-9.png");
+		// $("img#opt-10").attr("src", url + levels[i_level] + "-10.png");
+
 		$(function() {
 			$('.question-container').hover(function() {
 				$(this).css('background', '#3CA8FF');
@@ -104,6 +162,19 @@
 			// on mouseout, reset the background colour
 				$(this).css('background', '');
 			});
+		});
+
+		$(".question-container").click(function () {
+			$(this).toggleClass("selected");
+			var id_str = $(this).children().attr("src").split("-");
+			var id = id_str[id_str.length - 1].split(".")[0];
+
+			if (!selected.includes(id)) {
+				selected.push(id);
+			} else {
+				var index = selected.indexOf(id);
+				if (index !== -1) selected.splice(index, 1);
+			}
 		});
 	</script>
 </html>

@@ -44,17 +44,17 @@ We are using the following stimuli to test:
 
 ```{r}
 set.seed(7841)
-k = 10
-sample_size = 10
+sample_size = 20
+n_trials = 10
 n_stores = 100
 n_regions = 10
 baseline = 0
 
-p_h1_levels = c(seq(5, 9))
+p_h1_levels = c(seq(2, 8))
 sd = seq(2, 3, 5)
 
 data.sim <- crossing( 
-    trial = seq(1:k),
+    trial = seq(1:n_trials),
     baseline = baseline,
     p_h1 = p_h1_levels,
     sd = sd
@@ -66,7 +66,7 @@ data.sim <- crossing(
   ) %>%
   unnest( cols = c(mu) ) %>%
   mutate( 
-    region_idx = rep(1:10, 50),
+    region_idx = rep(1:10, (length(p_h1_levels) * 10)),
     data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
   )
 
@@ -82,7 +82,28 @@ data.sample <- data.sim %>%
       set.seed((.x))
       paste0(sample(LETTERS, 4), collapse = "")
     }),
-    store_idx = list(rep(1:k))
+    store_idx = list(rep(1:sample_size))
+  )
+```
+
+
+### Simulations
+Let's run some simulations to calculate if the number of panels will have an effect on FDR detection
+
+```{r}
+n_plots = 10
+fdr = 0.05
+
+data.sample %>% 
+  filter (p_h1 == 0.5) %>%
+  group_by(trial) %>%
+  sample_n( n_plots ) %>%
+  mutate( p_val = map_dbl( profit, ~t.test(.x)$p.value ) ) %>%
+  arrange( p_val, .by_group = TRUE ) %>%
+  mutate( 
+    rank = seq(1:n_plots),
+    critical_bh = (rank/n_plots) * fdr,
+    reject = ifelse( p_val <= critical_bh, TRUE, FALSE)
   )
 ```
 

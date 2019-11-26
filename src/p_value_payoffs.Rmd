@@ -36,7 +36,7 @@ n_{reject} &: \textit{number of the stimuli where user says the mean is greater}
 \\
 n &= n_{greater\land reject} + n_{\neg greater \land reject} + n_{greater \land \neg reject} + n_{\neg greater \land \neg reject}  \\
 \\
-FDR &= E\left[\frac{n_{greater \land reject}}{n_{reject}} \middle| n_{reject} > 0 \right]P(n_{reject} > 0) \\
+FDR &= E\left[\frac{\neg n_{greater \land reject}}{n_{reject}} \middle| n_{reject} > 0 \right]P(n_{reject} > 0) \\
 payoff &= 1000n_{greater\land reject} - 19000n_{\neg greater \land reject} - 1000n_{greater \land \neg reject} + 1000n_{\neg greater \land \neg reject}\\
 E\left[payoff\right] &= 1000E\left[n_{greater\land reject}\right] - 19000E\left[n_{\neg greater \land reject}\right] - 1000E\left[n_{greater \land \neg reject}\right] + 1000E\left[n_{\neg greater \land \neg reject}\right]  \\
 \\
@@ -145,6 +145,20 @@ E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
     1000 * n * (1 - alpha) * p_null
 }
 ```
+
+
+```{r}
+ggplot(
+  data.frame(x = rep(seq(0, 1, length.out = 100), times = 10), 
+             mu = rep(seq(0, .9, length.out = 10), each = 100),
+             y = mutate(F_p(x, mu, 0.2, 10))),
+  aes(x, y, color = mu)
+) +
+  geom_point()
+
+```
+
+
 
 ## Simulations of payoffs
 

@@ -147,16 +147,6 @@ E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
 ```
 
 
-```{r}
-ggplot(
-  data.frame(x = rep(seq(0, 1, length.out = 100), times = 10), 
-             mu = rep(seq(0, .9, length.out = 10), each = 100),
-             y = mutate(F_p(x, mu, 0.2, 10))),
-  aes(x, y, color = mu)
-) +
-  geom_point()
-
-```
 
 
 
@@ -167,9 +157,14 @@ Set up the simulation:
 ```{r}
 alpha = .05
 n_panels = 10
+you_pick_two <- 2
 n_obs = 10
 k = 5000
+```
 
+
+
+```{r}
 calc_rates = function(prior_prob_null) {
   prior_prob_greater = 1 - prior_prob_null
   
@@ -187,12 +182,15 @@ calc_rates = function(prior_prob_null) {
       p_bonf = p.adjust(p_raw, method = "bonferroni"),
       p_all = 0,
       p_none = 1,
+      # randomly picking half of the panels to be significant
+      p_random = sample(c(rep(0, you_pick_two), rep(1, n_panels - you_pick_two))),
       p_one = ifelse(p_raw == min(p_raw), 0, 1)
     ) %>%
-    gather(p_type, p, p_raw, p_bh, p_bonf, p_all, p_none, p_one) %>%
+    
+    gather(p_type, p, p_raw, p_bh, p_bonf, p_all, p_none, p_one, p_random) %>%
     mutate(
-      decide_greater = p < alpha
-    ) %>%
+    decide_greater = p < alpha
+    )  %>%
     group_by(p_type, run) %>%
     summarise(
       n_rejections = sum(decide_greater),

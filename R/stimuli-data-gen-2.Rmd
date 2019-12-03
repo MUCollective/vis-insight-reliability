@@ -86,27 +86,6 @@ data.sample <- data.sim %>%
   )
 ```
 
-
-### Simulations
-Let's run some simulations to calculate if the number of panels will have an effect on FDR detection
-
-```{r}
-n_plots = 10
-fdr = 0.05
-
-data.sample %>% 
-  filter (p_h1 == 0.5) %>%
-  group_by(trial) %>%
-  sample_n( n_plots ) %>%
-  mutate( p_val = map_dbl( profit, ~t.test(.x)$p.value ) ) %>%
-  arrange( p_val, .by_group = TRUE ) %>%
-  mutate( 
-    rank = seq(1:n_plots),
-    critical_bh = (rank/n_plots) * fdr,
-    reject = ifelse( p_val <= critical_bh, TRUE, FALSE)
-  )
-```
-
 ## Visualizations
 
 ### 1. Bar chart (raw data points with mean point estimate)
@@ -127,21 +106,27 @@ data.sample %>%
 ### 1.1. Scatterplot of raw data with jitter
 
 ```{r, scatterplot, fig.width = 3, fig.height = 4, warning = FALSE}
-data.interval <- data.sample %>%
-  mean_qi(profit, .width = c(.95)) %>%
-  select( - store_idx )
+data.sample %>%
+  unnest( cols = c(profit, store_idx) ) %>%
+  filter( trial == 1 & p_h1 == 0.5 ) %>%
+  ggplot(aes(x = NA, y = profit)) + 
+  geom_jitter( width = 0.2, alpha = 0.7) + 
+  facet_wrap( ~ region, ncol = 5 ) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  ylim(c(-6, 6))
+```
 
+
+Below, we generate these plots and save it as images to be used in the pilot study.
+
+```{r, scatterplot_save, fig.width = 3, fig.height = 4, warning = FALSE}
 for(i in 1:n_regions) {
-  for(j in 1:length(p_h1_levels)) {
-    data.interval.i <- data.interval %>%
-      filter( trial == 1  & p_h1 == p_h1_levels[j] & region_idx == i )
-    
+  for(j in 1:n_trials) {
     p <- data.sample %>%  
       unnest( cols = c(profit, store_idx) ) %>%
-      filter( trial == 1 & p_h1 == p_h1_levels[j] & region_idx == i ) %>%
+      filter( trial == j & region_idx == i & p_h1 == 0.5 ) %>%
       ggplot(aes(x = NA, y = profit)) + 
-      geom_pointinterval(data = data.interval.i) +
-      geom_point( data = data.interval.i, aes(x = NA, y = profit), size = 4) +
+      geom_jitter( width = 0.2, alpha = 0.7) +
       geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
       ylim(c(-6, 6)) +
       theme( 
@@ -152,7 +137,7 @@ for(i in 1:n_regions) {
         axis.title.y = element_text( size = 14 )
       )
     
-    ggsave(filename = paste0('../plots/ci/profits-p_', p_h1_levels[j], '-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+    ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-p_0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
   }
 }
 ```
@@ -175,6 +160,39 @@ data.sample %>%
   # geom_point( data = data.interval, aes(x = NA, y = profit), size = 4) +
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 )
+```
+
+Below, we generate these plots and save it as images to be used in the pilot study.
+
+```{r, mean_ci_save, fig.width = 3, fig.height = 4, eval = FALSE}
+data.interval <- data.sample %>%
+  mean_qi(profit, .width = c(.95)) %>%
+  select( - store_idx )
+
+for(i in 1:n_regions) {
+  for(j in 1:n_trials) {
+    data.interval.i <- data.interval %>%
+      filter( trial == j & region_idx == i & p_h1 == 0.5 )
+    
+    p <- data.sample %>%  
+      unnest( cols = c(profit, store_idx) ) %>%
+      filter( p_h1 == 0.5 & p_h1 == j & region_idx == i ) %>%
+      ggplot(aes(x = NA, y = profit)) + 
+      geom_pointinterval(data = data.interval.i) +
+      geom_point( data = data.interval.i, aes(x = NA, y = profit), size = 4) +
+      geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+      ylim(c(-6, 6)) +
+      theme( 
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text( size = 12 ),
+        axis.title.y = element_text( size = 14 )
+      )
+    
+    ggsave(filename = paste0('../plots/ci/profits-t', j,'-p_0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+  }
+}
 ```
 
 ```{r, bootstrap_mean}

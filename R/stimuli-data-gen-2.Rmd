@@ -50,30 +50,28 @@ n_stores = 100
 n_regions = 10
 baseline = 0
 
-p_h1_levels = c(seq(2, 8))
-sd = seq(2, 3, 5)
+p_h1_levels = 5 # c(seq(2, 8))
+std.dev = c(2, 3, 5)
 
 data.sim <- crossing( 
     trial = seq(1:n_trials),
     baseline = baseline,
     p_h1 = p_h1_levels,
-    sd = sd
+    sd = std.dev
   ) %>%
   mutate( 
     mu = map( p_h1, ~ c(rep(1, .x), rep(0, n_regions - .x)) ),
-    mu = map(mu, ~ sample(.x, size = n_regions) ),
+    # mu = map(mu, ~ sample(.x, size = n_regions) ),
     p_h1 = p_h1 / 10
   ) %>%
   unnest( cols = c(mu) ) %>%
   mutate( 
-    region_idx = rep(1:10, (length(p_h1_levels) * 10)),
+    region_idx = rep(1:n_regions, n_trials * length(std.dev)),
     data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
   )
-
-p_h1_levels = p_h1_levels / 10
 ```
 
-```{r, fig.width = 12, fig.height = 8}
+```{r, sample}
 data.sample <- data.sim %>%
   mutate(
     profit = map(data, ~sample(., sample_size)),
@@ -105,7 +103,7 @@ data.sample %>%
 
 ### 1.1. Scatterplot of raw data with jitter
 
-```{r, scatterplot, fig.width = 3, fig.height = 4, warning = FALSE}
+```{r, scatterplot, fig.width = 10, fig.height = 4, warning = FALSE}
 data.sample %>%
   unnest( cols = c(profit, store_idx) ) %>%
   filter( trial == 1 & p_h1 == 0.5 ) %>%
@@ -119,25 +117,27 @@ data.sample %>%
 
 Below, we generate these plots and save it as images to be used in the pilot study.
 
-```{r, scatterplot_save, fig.width = 3, fig.height = 4, warning = FALSE}
+```{r, scatterplot_save, fig.width = 3, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {
   for(j in 1:n_trials) {
-    p <- data.sample %>%  
-      unnest( cols = c(profit, store_idx) ) %>%
-      filter( trial == j & region_idx == i & p_h1 == 0.5 ) %>%
-      ggplot(aes(x = NA, y = profit)) + 
-      geom_jitter( width = 0.2, alpha = 0.7) +
-      geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-      ylim(c(-6, 6)) +
-      theme( 
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.title.x = element_blank(),
-        axis.text.y = element_text( size = 12 ),
-        axis.title.y = element_text( size = 14 )
-      )
-    
-    ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-p_0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+    for (k in 1:length(std.dev)) {
+      p <- data.sample %>%  
+          unnest( cols = c(profit, store_idx) ) %>%
+          filter( trial == j & region_idx == i & sd == k ) %>%
+          ggplot(aes(x = NA, y = profit)) + 
+          geom_jitter( width = 0.2, alpha = 0.7) +
+          geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+          ylim(c(-6, 6)) +
+          theme( 
+            axis.text.x = element_blank(),
+            axis.ticks.x = element_blank(),
+            axis.title.x = element_blank(),
+            axis.text.y = element_text( size = 12 ),
+            axis.title.y = element_text( size = 14 )
+          )
+        
+        ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-sd', k, '-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png") 
+    }
   }
 }
 ```
@@ -148,11 +148,11 @@ for(i in 1:n_regions) {
 data.interval <- data.sample %>%
   mean_qi(profit, .width = c(.95)) %>%
   select( - store_idx ) %>%
-  filter( trial == 1 & p_h1 == 0.5 & region == "YDGA" )
+  filter( trial == 1 & region_idx == 1 & sd == std.dev[[1]] )
 
 data.sample %>%  
   unnest( cols = c(profit, store_idx) ) %>%
-  filter( trial == 1 & p_h1 == 0.5 & region == "YDGA" ) %>%
+  filter( trial == 1 & region_idx == 1 & sd == std.dev[[1]] ) %>%
   ggplot(aes(x = NA, y = profit)) + 
   geom_jitter(width = 0.2, alpha = 0.5, colour = "red") + 
   geom_pointinterval(data = data.interval) +
@@ -171,26 +171,28 @@ data.interval <- data.sample %>%
 
 for(i in 1:n_regions) {
   for(j in 1:n_trials) {
-    data.interval.i <- data.interval %>%
-      filter( trial == j & region_idx == i & p_h1 == 0.5 )
-    
-    p <- data.sample %>%  
-      unnest( cols = c(profit, store_idx) ) %>%
-      filter( p_h1 == 0.5 & p_h1 == j & region_idx == i ) %>%
-      ggplot(aes(x = NA, y = profit)) + 
-      geom_pointinterval(data = data.interval.i) +
-      geom_point( data = data.interval.i, aes(x = NA, y = profit), size = 4) +
-      geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-      ylim(c(-6, 6)) +
-      theme( 
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.title.x = element_blank(),
-        axis.text.y = element_text( size = 12 ),
-        axis.title.y = element_text( size = 14 )
-      )
-    
-    ggsave(filename = paste0('../plots/ci/profits-t', j,'-p_0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+    for (k in 1:length(std.dev)) {
+      data.interval.i <- data.interval %>%
+        filter( trial == j & region_idx == i & sd == std.dev[[k]] )
+      
+      p <- data.sample %>%  
+        unnest( cols = c(profit, store_idx) ) %>%
+        filter( trial == j & region_idx == i & sd == std.dev[[k]] ) %>%
+        ggplot(aes(x = NA, y = profit)) + 
+        geom_pointinterval(data = data.interval.i) +
+        geom_point( data = data.interval.i, aes(x = NA, y = profit), size = 4) +
+        geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+        ylim(c(-15, 15)) +
+        theme( 
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.title.x = element_blank(),
+          axis.text.y = element_text( size = 12 ),
+          axis.title.y = element_text( size = 14 )
+        )
+
+      ggsave(filename = paste0('../plots/ci/profits-t', j,'-sd', k, '-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png") 
+    }
   }
 }
 ```

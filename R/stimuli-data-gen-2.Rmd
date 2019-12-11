@@ -46,31 +46,35 @@ We are using the following stimuli to test:
 set.seed(7841)
 sample_size = 20
 n_trials = 10
-n_stores = 100
+n_stores = 200
 n_regions = 10
 baseline = 0
 
-p_h1_levels = 5 # c(seq(2, 8))
-std.dev = c(2, 3, 5)
+p_h1_levels = 0.5 # c(seq(2, 8))
+effect_sizes = c(0.2, 0.3, 0.5)
+means = 1 #c(1, 2)
 
 data.sim <- crossing( 
     trial = seq(1:n_trials),
     baseline = baseline,
     p_h1 = p_h1_levels,
-    sd = std.dev
+    mu = means,
+    effect_size = effect_sizes
   ) %>%
   mutate(
-    mu = map( p_h1, ~ c(rep(2, .x), rep(0, n_regions - .x)) ),
-    mu = map(mu, ~ sample(.x, size = n_regions) ),
-    p_h1 = p_h1 / 10,
+    sd = mu / effect_size,
+    mu = map2(p_h1, mu, ~ (rbinom(n_regions, 1, .x) * .y)), #map2( mu, p_h1, ~ c(rep(.x, .y), rep(0, n_regions - .y)) ),
+    # mu = map(mu, ~ sample(.x, size = n_regions) ),
+    # p_h1 = p_h1 / 10,
     trial = 1:nrow(.)
   ) %>%
   unnest( cols = c(mu) ) %>%
   mutate( 
-    region_idx = rep(1:n_regions, n_trials * length(std.dev)),
+    region_idx = rep(1:n_regions, n_trials * length(means) * length(effect_sizes)),
     data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
   )
 ```
+
 
 
 ```{r, sample}
@@ -93,12 +97,12 @@ data.sample <- data.sim %>%
 ```{r, raw_data, fig.width = 10, fig.height = 4}
 data.sample %>%
   unnest( cols = c(profit, store_idx) ) %>%
-  filter( trial == 1 & sd == 2 ) %>%
+  filter( trial == 1 ) %>%
   ggplot(aes(x = store_idx, y = profit)) + 
   geom_col() + 
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  ylim(c(-6, 6))
+  ylim(c(-15, 20))
   #scale_x_continuous( breaks = seq(0, 10, by = 2))
 ```
 
@@ -108,12 +112,12 @@ data.sample %>%
 ```{r, scatterplot, fig.width = 10, fig.height = 4, warning = FALSE}
 data.sample %>%
   unnest( cols = c(profit, store_idx) ) %>%
-  filter( trial == 1 & sd == 2 ) %>%
+  filter( trial == 2, region_idx == 3 ) %>%
   ggplot(aes(x = NA, y = profit)) + 
   geom_jitter( width = 0.2, alpha = 0.7) + 
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  ylim(c(-6, 6))
+  ylim(c(-2, 4))
 ```
 
 
@@ -121,7 +125,7 @@ Below, we generate these plots and save it as images to be used in the pilot stu
 
 ```{r, scatterplot_save, fig.width = 3, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {
-  for(j in 1:(n_trials * length(std.dev))) {
+  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
     p <- data.sample %>%  
         unnest( cols = c(profit, store_idx) ) %>%
         filter( trial == j & region_idx == i ) %>%
@@ -148,16 +152,16 @@ for(i in 1:n_regions) {
 data.interval <- data.sample %>%
   mean_qi(profit, .width = c(.95)) %>%
   select( - store_idx ) %>%
-  filter( trial == 1 & region_idx == 1 & sd == std.dev[[1]] )
+  filter( trial == 2  )
 
 data.sample %>%  
   unnest( cols = c(profit, store_idx) ) %>%
-  filter( trial == 1 & region_idx == 1 & sd == std.dev[[1]] ) %>%
+  filter( trial == 2 ) %>%
   ggplot(aes(x = NA, y = profit)) + 
   geom_jitter(width = 0.2, alpha = 0.5, colour = "red") + 
   geom_pointinterval(data = data.interval) +
   # geom_errorbar( data = data.interval, aes(ymin = .lower, ymax = .upper, x = NA), width = 0.15) +
-  # geom_point( data = data.interval, aes(x = NA, y = profit), size = 4) +
+  geom_point( data = data.interval, aes(x = NA, y = profit), size = 4) +
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 )
 ```
@@ -170,7 +174,7 @@ data.interval <- data.sample %>%
   select( - store_idx )
 
 for(i in 1:n_regions) {
-  for(j in 1:(n_trials * length(std.dev))) {
+  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
     data.interval.i <- data.interval %>%
       filter( trial == j & region_idx == i )
     
@@ -226,17 +230,29 @@ data.sim.boot %>%
 
 ### 4. Bootstrapped means with 95% CI
 
-```{r, plot-mean-ci, fig.width = 10, fig.height = 4, warning = FALSE}
-data.sim.boot %>%
-  filter(trial == 1 & p_h1 == 0.5) %>%
-  unnest( cols = c(boot.mean) ) %>%
-  group_by(region) %>%
-  mean_qi(boot.mean, .width = c(.66, .95)) %>%
-  ggplot(aes(y = boot.mean, x = NA)) +
-  geom_pointinterval() +
-  facet_wrap( ~ region, ncol = 5 ) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) #+
-  #ggtitle( "Bootstrap mean profit (for the past 25 weeks) from a sample of 25 stores in 4 different regions" )
+```{r, plot-mean-ci, fig.width = 10, fig.height = 4, eval = FALSE}
+for(i in 1:n_regions) {
+  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
+    p <- data.sim.boot %>%
+      filter( trial == j & region_idx == i ) %>%
+      unnest( cols = c(profit, store_idx) ) %>%
+      mean_qi(boot.mean, .width = c(.95)) %>%
+      ggplot(aes(x = NA, y = boot.mean)) + 
+      geom_pointinterval() +
+      geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+      ylim(c(-5, 6)) +
+      ylab( "mean point estimate and 95% confidence interval for profit" ) +
+      theme( 
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text( size = 12 ),
+        axis.title.y = element_text( size = 14 )
+      )
+
+    ggsave(filename = paste0('../plots/boot-ci/profits-t', j, '-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+  }
+}
 ```
 
 
@@ -244,15 +260,16 @@ data.sim.boot %>%
 
 ```{r, fig.width = 10, fig.height = 4}
 data.sim.boot %>%
-  filter(trial == 1 & p_h1 == 0.5) %>%
+  filter(trial == 2 & region_idx == 3) %>%
   unnest( cols = c(boot.mean) ) %>%
   group_by(region) %>%
   ggplot(aes(y = boot.mean, x = NA)) +
   stat_gradientinterval(fill = "blue", show_interval = TRUE) +
   scale_alpha_continuous(range = c(0, 1)) +
-  facet_wrap( ~ region, ncol = 5 ) +
+  facet_wrap( ~ region_idx, ncol = 5 ) +
   labs( alpha = "density" ) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" )
+  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
+  ylim(c(-2, 4))
 ```
 
 
@@ -280,10 +297,55 @@ data.sim.boot %>%
 
 ```{r, plot-mean-density, fig.width = 10, fig.height = 4}
 data.sim.boot  %>%
-  filter(trial == 1 & p_h1 == 0.5) %>%
+  filter(trial == 2 & region_idx == 3) %>%
   unnest( cols = c(boot.mean) ) %>%
   ggplot( aes(x = NA, y = boot.mean) ) +
   stat_halfeye() +
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, alpha = 0.5, color = "red" )
+  ylab( "probability distribution of mean profit" ) +
+```
+
+```{r, pred-density, fig.width = 10, fig.height = 4, eval = FALSE}
+for(i in 1:n_regions) {
+  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
+    p <- data.sim.boot %>%
+      filter( trial == j & region_idx == i ) %>%
+      unnest( cols = c(boot.mean) ) %>%
+      ggplot( aes(x = NA, y = boot.mean) ) +
+      stat_halfeye() +
+      facet_wrap( ~ region, ncol = 5 ) +
+      geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
+      ylim(c(-6, 8)) +
+      ylab( "probability distribution of mean profit" ) +
+      theme( 
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text( size = 12 ),
+        axis.title.y = element_text( size = 14 )
+      )
+
+    ggsave(filename = paste0('../plots/halfeye/profits-t', j, '-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+  }
+}
+```
+
+
+
+### 8. Quantile dot plots
+
+```{r, plot-mean-density, fig.width = 10, fig.height = 4}
+p <- data.sim.boot  %>%
+  filter(trial == 2 & region_idx == 3) %>%
+  unnest( cols = c(boot.mean) ) %>%
+  ggplot( aes(x = NA, y = boot.mean) )  +
+  stat_dots(position = "dodge", quantiles = 50) +
+  facet_wrap( ~ region, ncol = 5 ) +
+  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
+  coord_cartesian( ylim = c(-2, 4))
+
+pdf(file = "../figures/dots.pdf", useDingbats = FALSE, width = 5, height = 8)
+p
+dev.off()
 ```

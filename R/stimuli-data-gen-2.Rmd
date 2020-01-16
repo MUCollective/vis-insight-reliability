@@ -15,6 +15,20 @@ library(ggplot2)
 library(modelr)
 library(tidybayes)
 library(gamlss.dist)
+
+theme_set( theme_light() ) +
+  theme_update(
+    panel.border = element_blank(),
+    panel.grid.major = element_line(colour = "#666666", size = 0.1),
+    panel.grid.minor = element_line(colour = "#666666", size = 0.1),
+    panel.background = element_rect(fill = "transparent",colour = NA),
+    plot.background = element_rect(fill = "transparent",colour = NA),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text( size = 12 ),
+    axis.title.y = element_text( size = 14 )
+  )
 ```
 
 ## Study design
@@ -43,18 +57,21 @@ We are using the following stimuli to test:
 - different mean and sd combinations such that the effect size is consistent
 - different effect sizes (so that we can control for effect size)
 
-```{r}
+```{r setup_vars}
+# we will load the data instead
 set.seed(7841)
 sample_size = 20
 n_trials = 10
 n_stores = 200
 n_regions = 10
 baseline = 0
-
 p_h1_levels = 0.5 # c(seq(2, 8))
 effect_sizes = c(0.2, 0.3, 0.5)
-means = 1 #c(1, 2)
+means = 1
+```
 
+
+```{r eval = FALSE}
 data.sim <- crossing( 
     trial = seq(1:n_trials),
     baseline = baseline,
@@ -74,11 +91,7 @@ data.sim <- crossing(
     region_idx = rep(1:n_regions, n_trials * length(means) * length(effect_sizes)),
     data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
   )
-```
 
-
-
-```{r, sample}
 data.sample <- data.sim %>%
   mutate(
     profit = map(data, ~sample(., sample_size)),
@@ -89,6 +102,14 @@ data.sample <- data.sim %>%
     }),
     store_idx = list(rep(1:sample_size))
   )
+
+#save(data.sample, data.sim, file = "../data/simulated_data.RData")
+```
+
+
+
+```{r, sample}
+load("../data/simulated_data.RData")
 
 nu = sample_size - 1
 
@@ -104,8 +125,19 @@ limits = data.sample %>%
   magrittr::extract2("value")
 ```
 
-## Visualizations
+```{r}
+data.sample %>%
+  mutate(
+    estimate = round(map_dbl(data, ~t.test(.x, conf.level = 0.9)$p.value), digits = 5),
+    estimate_10pc = estimate < 0.1,
+    estimate_5pc = estimate < 0.05,
+    estimate_1pc = estimate < 0.01
+  ) %>%
+  dplyr::select(-c(baseline, p_h1, effect_size, data, profit, idx, region, store_idx)) %>%
+  write.csv(file = "../data/true_effects.csv")
+```
 
+## Visualizations
 
 ### 1.1. Scatterplot of raw data with jitter
 
@@ -132,16 +164,9 @@ for(i in 1:n_regions) {
         ggplot(aes(x = NA, y = profit)) + 
         geom_jitter( width = 0.2, alpha = 0.7) +
         geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-        ylim(c(-15, 15)) +
-        theme( 
-          axis.text.x = element_blank(),
-          axis.ticks.x = element_blank(),
-          axis.title.x = element_blank(),
-          axis.text.y = element_text( size = 12 ),
-          axis.title.y = element_text( size = 14 )
-        )
+        ylim(c(-15, 15))
       
-      ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png") 
+      ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg") 
   }
 }
 ```
@@ -192,48 +217,51 @@ data.sim.boot %>%
 ```
 
 ### 4. Bootstrapped means with 95% CI
+
 ```{r}
 data.sample %>%
-    filter( trial == 3 ) %>%
-    mutate( 
-      mean = map_dbl(profit, mean),
-      se = map_dbl(profit, ~sd(.x)/sqrt(length(.x))),
-      .lower = qTF(0.025, mean, se, nu = nu),
-      .upper = qTF(0.975, mean, se, nu = nu)
-    ) %>%
-    ggplot(aes(x = NA, y = mean)) + 
-    geom_pointinterval(size = 8) +
-    geom_point( size = 5 ) +
-    geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-    facet_wrap( . ~ region, ncol = 5 )
+  filter( trial == 3 & region_idx == 1 ) %>%
+  rename( sample = profit, population = data) %>%
+  pivot_longer( cols = c(sample)) %>%
+  mutate( 
+    mean = map_dbl(value, mean),
+    se = map_dbl(value, ~sd(.x)/sqrt(length(.x))),
+    .lower = qTF(0.025, mean, se, nu = nu),
+    .upper = qTF(0.975, mean, se, nu = nu)
+  ) %>%
+  group_by(name) %>%
+  ggplot(aes(x = NA, y = mean, color = name)) + 
+  geom_pointinterval(position = position_dodge(width = 0.2), size = 8) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+  scale_color_manual( values=c("#C44232", "#333333") )
 ```
 
 
 ```{r, fig.width = 10, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {
   p <- data.sample %>%
-    filter( trial == 3 & region_idx == i ) %>%
+    filter(trial == 3 & region_idx == i) %>%
+    rename(sample = profit, population = data) %>%
+    pivot_longer( cols = c(sample, population)) %>%
     mutate( 
-      mean = map_dbl(data, mean),
-      se = map_dbl(data, ~sd(.x)/sqrt(length(.x))),
+      mean = map_dbl(value, mean),
+      se = map_dbl(value, ~sd(.x)/sqrt(length(.x))),
       .lower = qTF(0.025, mean, se, nu = nu),
       .upper = qTF(0.975, mean, se, nu = nu)
     ) %>%
-    ggplot(aes(x = NA, y = mean)) + 
-    geom_pointinterval(size = 8) +
-    geom_point( size = 5 ) +
+    group_by(name) %>%
+    ggplot(aes(x = NA, y = mean, color = name)) + 
+    geom_pointinterval(position = position_dodge(width = 0.2), size = 8) +
     geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-    facet_wrap( . ~ region, ncol = 5 ) +
-    scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) ) +
+    scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+    scale_color_manual( values=c("#C44232", "#333333")) + #c("#333333") ) +
     theme( 
-      axis.text.x = element_blank(),
-      axis.ticks.x = element_blank(),
-      axis.title.x = element_blank(),
-      axis.text.y = element_text( size = 20 ),
-      axis.title.y = element_blank()
+      legend.position = "none",
+      axis.text.y = element_text( size = 20 )
     )
 
-  ggsave(filename = paste0('../plots/example/profits-sol-t0-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+  ggsave(filename = paste0('../plots/example/profits-sol-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
 }
 ```
 
@@ -252,17 +280,9 @@ for(i in 1:n_regions) {
       ggplot(aes(x = NA, y = mean)) + 
       geom_pointinterval(size = 5) +
       geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-      facet_wrap( . ~ region, ncol = 5 ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) ) +
-      theme( 
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.title.x = element_blank(),
-        axis.text.y = element_text( size = 14 ),
-        axis.title.y = element_blank()
-      )
-
-    ggsave(filename = paste0('../plots/ci/profits-t', j, '-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+      scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )
+    
+    ggsave(filename = paste0('../plots/ci/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
   }
 }
 ```
@@ -326,19 +346,11 @@ for(i in 1:n_regions) {
       unnest( cols = c(boot.mean) ) %>%
       ggplot( aes(x = NA, y = boot.mean) ) +
       stat_halfeye() +
-      facet_wrap( ~ region, ncol = 5 ) +
       geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-      ylim(c(-6, 8)) +
-      ylab( "probability distribution of mean profit" ) +
-      theme( 
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.title.x = element_blank(),
-        axis.text.y = element_text( size = 12 ),
-        axis.title.y = element_text( size = 14 )
-      )
+      scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+      ylab( "probability distribution of mean profit" )
 
-    ggsave(filename = paste0('../plots/halfeye/profits-t', j, '-p0.5-', i, '.png'), height = 6, width = 4, units = "in", dpi = 150, plot = p, device = "png")
+    ggsave(filename = paste0('../plots/halfeye/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
   }
 }
 ```

@@ -227,7 +227,7 @@ data.sample %>%
   ) %>%
   group_by(name) %>%
   ggplot(aes(x = NA, y = mean, color = name)) + 
-  geom_pointinterval(position = position_dodge(width = 0.2), size = 8) +
+  geom_pointinterval(position = position_dodge(width = 0.2), point_size = 5, interval_size = 12) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
   scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
   scale_color_manual( values=c("#C44232", "#333333") )
@@ -252,9 +252,7 @@ for(i in 1:n_regions) {
     geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
     scale_color_manual( values=c("#C44232", "#333333")) +
-    theme( 
-      legend.position = "none"
-    )
+    theme(legend.position = "none")
 
   ggsave(filename = paste0('../plots/example/profits-sol-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
 }
@@ -273,7 +271,7 @@ for(i in 1:n_regions) {
         .upper = qTF(0.975, mean, se, nu = nu)
       ) %>%
       ggplot(aes(x = NA, y = mean)) + 
-      geom_pointinterval(size = 5) +
+      geom_pointinterval(point_size = 5, interval_size = 12) +
       geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
       scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )
     
@@ -327,7 +325,7 @@ data.sim.boot  %>%
   filter(trial == 2 & region_idx == 3) %>%
   unnest( cols = c(boot.mean) ) %>%
   ggplot( aes(x = NA, y = boot.mean) ) +
-  stat_halfeye(point_size = 4, interval_size = 4) +
+  stat_halfeye(point_size = 5, interval_size = 8) +
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
   scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
@@ -341,7 +339,7 @@ for(i in 1:n_regions) {
       filter( trial == j & region_idx == i ) %>%
       unnest( cols = c(boot.mean) ) %>%
       ggplot( aes(x = NA, y = boot.mean) ) +
-      stat_halfeye(point_size = 4, interval_size = 6) +
+      stat_halfeye(point_size = 5, interval_size = 8) +
       geom_hline( yintercept = 0, size = 1, alpha = 0.5, color = "red" ) +
       scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
       ylab( "probability distribution of mean profit" )

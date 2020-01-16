@@ -26,8 +26,8 @@ theme_set( theme_light() ) +
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     axis.title.x = element_blank(),
-    axis.text.y = element_text( size = 20 ),
-    axis.title.y = element_text( size = 24 )
+    axis.text.y = element_text( size = 24 ),
+    axis.title.y = element_text( size = 30 )
   )
 ```
 
@@ -243,7 +243,7 @@ for(i in 1:n_regions) {
   p <- data.sample %>%
     filter(trial == 3 & region_idx == i) %>%
     rename(sample = profit, population = data) %>%
-    pivot_longer( cols = c(sample)) %>%
+    pivot_longer( cols = c(sample, population)) %>%
     mutate( 
       mean = map_dbl(value, mean),
       se = map_dbl(value, ~sd(.x)/sqrt(length(.x))),
@@ -252,10 +252,10 @@ for(i in 1:n_regions) {
     ) %>%
     group_by(name) %>%
     ggplot(aes(x = NA, y = mean, color = name)) + 
-    geom_pointinterval(position = position_dodge(width = 0.2), size = 10) +
+    geom_pointinterval(position = position_dodge(width = 0.2), size = 16) +
     geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
-    scale_color_manual( values=c("#333333")) +
+    scale_color_manual( values=c("#C44232", "#333333")) +
     theme( 
       legend.position = "none"
     )

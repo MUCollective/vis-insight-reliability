@@ -341,7 +341,7 @@ for(i in 1:n_regions) {
       filter( trial == j & region_idx == i ) %>%
       unnest( cols = c(boot.mean) ) %>%
       ggplot( aes(x = NA, y = boot.mean) ) +
-      stat_halfeye(point_size = 4) +
+      stat_halfeye(point_size = 4, interval_size = 6) +
       geom_hline( yintercept = 0, size = 1, alpha = 0.5, color = "red" ) +
       scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
       ylab( "probability distribution of mean profit" )

@@ -106,24 +106,36 @@ data.sample <- data.sim %>%
 #save(data.sample, data.sim, file = "../data/simulated_data.RData")
 ```
 
-
-
 ```{r, sample}
 load("../data/simulated_data.RData")
 
 nu = sample_size - 1
+```
 
-limits = data.sample %>% 
-  mutate( 
-    mean = map_dbl(profit, mean),
-    se = map_dbl(profit, ~sd(.x)/sqrt(length(.x))),
-    .lower = qTF(0.025, mean, se, nu = nu),
-    .upper = qTF(0.975, mean, se, nu = nu)
-  ) %>%
-  summarise(min = floor(min(.lower)), max = ceiling(max(.upper))) %>%
+```{r, bootstrap_mean}
+bootstrap_mean <- function(x, n = 5000) {
+  if (is_list(x)) x = flatten_dbl(x)
+  iter = 1:n
+  map_dbl(iter, function(.x){
+    set.seed(.x)
+    mean(sample(x, length(x), replace = TRUE))
+  }) 
+}
+
+data.sim.boot = data.sample %>%
+  dplyr::select( -data ) %>%
+  mutate( boot.mean = map(profit, bootstrap_mean))
+```
+
+
+```{r}
+limits = data.sim.boot %>%
+  unnest( cols = c(boot.mean)) %>%
+  summarise(min = floor(min(boot.mean)), max = ceiling(max(boot.mean))) %>%
   gather() %>%
   magrittr::extract2("value")
 ```
+
 
 ```{r}
 data.sample %>%
@@ -185,22 +197,6 @@ data.sample %>%
   facet_wrap( ~ region, ncol = 5 ) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 )
 ```
-
-```{r, bootstrap_mean}
-bootstrap_mean <- function(x, n = 5000) {
-  if (is_list(x)) x = flatten_dbl(x)
-  iter = 1:n
-  map_dbl(iter, function(.x){
-    set.seed(.x)
-    mean(sample(x, length(x), replace = TRUE))
-  }) 
-}
-
-data.sim.boot = data.sample %>%
-  dplyr::select( -data ) %>%
-  mutate( boot.mean = map(profit, bootstrap_mean))
-```
-
 
 ### 3. Bootstrapped ensembles
 
@@ -326,15 +322,16 @@ data.sim.boot %>%
 
 ### 7. Probability Density Function
 
-```{r, plot-mean-density, fig.width = 10, fig.height = 4}
+```{r, plot-mean-density, fig.width = 3.5, fig.height = 6}
 data.sim.boot  %>%
   filter(trial == 2 & region_idx == 3) %>%
   unnest( cols = c(boot.mean) ) %>%
   ggplot( aes(x = NA, y = boot.mean) ) +
-  stat_halfeye() +
+  stat_halfeye(point_size = 4, interval_size = 4) +
   facet_wrap( ~ region, ncol = 5 ) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" )
-  ylab( "probability distribution of mean profit" ) +
+  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
+  scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+  ylab( "probability distribution of mean profit" )
 ```
 
 ```{r, pred-density, fig.width = 10, fig.height = 4, eval = FALSE}
@@ -344,7 +341,7 @@ for(i in 1:n_regions) {
       filter( trial == j & region_idx == i ) %>%
       unnest( cols = c(boot.mean) ) %>%
       ggplot( aes(x = NA, y = boot.mean) ) +
-      stat_halfeye() +
+      stat_halfeye(point_size = 4) +
       geom_hline( yintercept = 0, size = 1, alpha = 0.5, color = "red" ) +
       scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
       ylab( "probability distribution of mean profit" )
@@ -353,7 +350,6 @@ for(i in 1:n_regions) {
   }
 }
 ```
-
 
 
 ### 8. Quantile dot plots

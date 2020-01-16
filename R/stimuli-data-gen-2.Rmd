@@ -218,19 +218,19 @@ data.sim.boot %>%
 data.sample %>%
   filter( trial == 3 & region_idx == 1 ) %>%
   rename( sample = profit, population = data) %>%
-  pivot_longer( cols = c(sample)) %>%
   mutate( 
-    mean = map_dbl(value, mean),
-    se = map_dbl(value, ~sd(.x)/sqrt(length(.x))),
+    pop_mean = map_dbl(population, mean),
+    mean = map_dbl(sample, mean),
+    se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
     .lower = qTF(0.025, mean, se, nu = nu),
     .upper = qTF(0.975, mean, se, nu = nu)
   ) %>%
-  group_by(name) %>%
-  ggplot(aes(x = NA, y = mean, color = name)) + 
-  geom_pointinterval(position = position_dodge(width = 0.2), point_size = 5, interval_size = 12) +
+  ggplot() + 
+  geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
+  geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
-  scale_color_manual( values=c("#C44232", "#333333") )
+  scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) ) +
+  xlim(-3, 3)
 ```
 
 
@@ -239,23 +239,46 @@ for(i in 1:n_regions) {
   p <- data.sample %>%
     filter(trial == 3 & region_idx == i) %>%
     rename(sample = profit, population = data) %>%
-    pivot_longer( cols = c(sample, population)) %>%
     mutate( 
-      mean = map_dbl(value, mean),
-      se = map_dbl(value, ~sd(.x)/sqrt(length(.x))),
+      pop_mean = map_dbl(population, mean),
+      mean = map_dbl(sample, mean),
+      se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
       .lower = qTF(0.025, mean, se, nu = nu),
       .upper = qTF(0.975, mean, se, nu = nu)
     ) %>%
-    group_by(name) %>%
-    ggplot(aes(x = NA, y = mean, color = name)) + 
-    geom_pointinterval(position = position_dodge(width = 0.2), size = 16) +
+    ggplot() + 
+    geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
+    geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
     geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
     scale_color_manual( values=c("#C44232", "#333333")) +
     theme(legend.position = "none") +
-    ylab( "mean profit and 95% confidence interval" )
+    ylab( "mean profit and 95% confidence interval" ) +
+    xlim(-3, 3)
 
   ggsave(filename = paste0('../plots/example/profits-sol-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
+}
+```
+
+```{r, fig.width = 10, fig.height = 4, eval = FALSE}
+for(i in 1:n_regions) {
+  p <- data.sample %>%
+    filter(trial == 3 & region_idx == i) %>%
+    rename(sample = profit, population = data) %>%
+    mutate( 
+      mean = map_dbl(sample, mean),
+      se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
+      .lower = qTF(0.025, mean, se, nu = nu),
+      .upper = qTF(0.975, mean, se, nu = nu)
+    ) %>%
+    ggplot(aes(x = NA, y = mean), fill = "#333333") + 
+    geom_pointinterval(position = position_dodge(width = 0.2), size = 16) +
+    geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
+    scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+    theme(legend.position = "none") +
+    ylab( "mean profit and 95% confidence interval" )
+
+  ggsave(filename = paste0('../plots/example/profits-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
 }
 ```
 

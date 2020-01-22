@@ -156,13 +156,10 @@ We then calculate what would be correct estimates for
 ```{r}
 data.sample %>%
   mutate(
-    estimate = round(map_dbl(profit, ~t.test(.x, conf.level = 0.9)$p.value), digits = 5),
-    estimate_10pc = estimate < 0.1,
-    estimate_5pc = estimate < 0.05,
-    estimate_1pc = estimate < 0.01
+    is_profit = ifelse( mu > 0, TRUE, FALSE)
   ) %>%
   dplyr::select(-c(mu_sd_pairs, baseline, p_h1, effect_size, data, profit, idx, region, store_idx)) %>%
-  write.csv(file = "../data/true_effects.csv")
+  write.csv(file = "../data/true_effects.csv", row.names = FALSE)
 ```
 
 ## Visualizations
@@ -188,7 +185,7 @@ for(i in 1:n_regions) {
         geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
         scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
         theme(legend.position = "none") +
-        ylab( "mean profit and 95% confidence interval" )
+        ylab( "Profits from 20 stores" )
       
       ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg") 
   }
@@ -231,7 +228,7 @@ data.sample %>%
   filter( trial == 3 & region_idx == 1 ) %>%
   mutate( 
     mean = map_dbl(profit, mean),
-    se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
+    se = map_dbl(profit, ~sd(.x)/sqrt(length(.x))),
     .lower = qTF(0.025, mean, se, nu = nu),
     .upper = qTF(0.975, mean, se, nu = nu)
   ) %>%

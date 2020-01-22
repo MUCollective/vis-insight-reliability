@@ -52,10 +52,9 @@ We are using the following stimuli to test:
 - ensemble plots (overlay of low opacity bootstrapped means)
 
 
-## Data generation
+### Study Design
 
-- different mean and sd combinations such that the effect size is consistent
-- different effect sizes (so that we can control for effect size)
+In our (initial pilot) study, we use a between subjects design where each participant will see a combination of different incentives and visualizations. Each participant will see 3 blocks of 30 trials each. Each block will consist of 10 trials for each of the three effect sizes. We also specify the number of regions, the prior probability of the number of stores being profitable in each trial (0.5); we do not vary these two values.
 
 ```{r setup_vars}
 # we will load the data instead
@@ -66,21 +65,31 @@ n_stores = 200
 n_regions = 10
 baseline = 0
 p_h1_levels = 0.5 # c(seq(2, 8))
-effect_sizes = c(0.2, 0.3, 0.5)
-means = 1
+# effect_sizes = c(0.2, 0.5, 0.8) We use mean and SD pairs instead
+mu_sd <- list(list(mu = 0.7, sd = 3.5), list(mu = 1.5, sd = 3), list(mu = 2, sd = 2.5))
 ```
 
+
+### Simulating the data
+
+- different mean and sd combinations such that the effect size is consistent
+- different effect sizes (so that we can control for effect size)
+
+First, we will simulate the data for the entire population. We create a data frame which contains all possible combinations of trials (indexed 1 to 10), and mean and standard deviation pairs. We then use a binomial distribution to simulate the mean for each of the 10 regions that will be presented to participants in a trial. Taking the value for each region as the mean of a normal distribution, we simulate the profits for the entire population (n = 20). We then randomly sample 20 stores from the population.
 
 ```{r eval = FALSE}
 data.sim <- crossing( 
     trial = seq(1:n_trials),
     baseline = baseline,
     p_h1 = p_h1_levels,
-    mu = means,
-    effect_size = effect_sizes
+    mu_sd_pairs = mu_sd
   ) %>%
   mutate(
-    sd = mu / effect_size,
+    mu = map_dbl(mu_sd_pairs, ~ .x[[1]]),
+    sd = map_dbl(mu_sd_pairs, ~ .x[[2]]),
+    effect_size = mu / sd
+  ) %>%
+  mutate(
     mu = map2(p_h1, mu, ~ (rbinom(n_regions, 1, .x) * .y)), #map2( mu, p_h1, ~ c(rep(.x, .y), rep(0, n_regions - .y)) ),
     # mu = map(mu, ~ sample(.x, size = n_regions) ),
     # p_h1 = p_h1 / 10,
@@ -103,14 +112,17 @@ data.sample <- data.sim %>%
     store_idx = list(rep(1:sample_size))
   )
 
-#save(data.sample, data.sim, file = "../data/simulated_data.RData")
+# save(data.sample, data.sim, file = "../data/simulated_data.RData")
 ```
 
 ```{r, sample}
 load("../data/simulated_data.RData")
-
 nu = sample_size - 1
 ```
+
+### Bootstrapping to get sampling distributions
+
+We bootstrap to obtain the sampling distributions for the means of each region in each trial. We also calculate limits to get reasonable values for the ends of the axes.
 
 ```{r, bootstrap_mean}
 bootstrap_mean <- function(x, n = 5000) {
@@ -136,16 +148,20 @@ limits = data.sim.boot %>%
   magrittr::extract2("value")
 ```
 
+### Adjusting for multiple comparisons
+
+<TBD>
+We then calculate what would be correct estimates for 
 
 ```{r}
 data.sample %>%
   mutate(
-    estimate = round(map_dbl(data, ~t.test(.x, conf.level = 0.9)$p.value), digits = 5),
+    estimate = round(map_dbl(profit, ~t.test(.x, conf.level = 0.9)$p.value), digits = 5),
     estimate_10pc = estimate < 0.1,
     estimate_5pc = estimate < 0.05,
     estimate_1pc = estimate < 0.01
   ) %>%
-  dplyr::select(-c(baseline, p_h1, effect_size, data, profit, idx, region, store_idx)) %>%
+  dplyr::select(-c(mu_sd_pairs, baseline, p_h1, effect_size, data, profit, idx, region, store_idx)) %>%
   write.csv(file = "../data/true_effects.csv")
 ```
 
@@ -154,16 +170,10 @@ data.sample %>%
 ### 1.1. Scatterplot of raw data with jitter
 
 ```{r, scatterplot, fig.width = 10, fig.height = 4, warning = FALSE}
-data.sample %>%
-  unnest( cols = c(profit, store_idx) ) %>%
-  filter( trial == 2, region_idx == 3 ) %>%
-  ggplot(aes(x = NA, y = profit)) + 
-  geom_jitter( width = 0.2, alpha = 0.7) + 
-  facet_wrap( ~ region, ncol = 5 ) +
-  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  ylim(limits)
+data.example <- data.sim.boot %>%
+  filter( trial == 2, region_idx == 3 ) %>% 
+  mean_qi(boot.mean)
 ```
-
 
 Below, we generate these plots and save it as images to be used in the pilot study.
 
@@ -174,9 +184,11 @@ for(i in 1:n_regions) {
         unnest( cols = c(profit, store_idx) ) %>%
         filter( trial == j & region_idx == i ) %>%
         ggplot(aes(x = NA, y = profit)) + 
-        geom_jitter( width = 0.2, alpha = 0.7) +
+        geom_jitter( width = 0.2, alpha = 0.7, size = 5) +
         geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-        ylim(c(-15, 15))
+        scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+        theme(legend.position = "none") +
+        ylab( "mean profit and 95% confidence interval" )
       
       ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg") 
   }
@@ -217,6 +229,48 @@ data.sim.boot %>%
 ```{r}
 data.sample %>%
   filter( trial == 3 & region_idx == 1 ) %>%
+  mutate( 
+    mean = map_dbl(profit, mean),
+    se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
+    .lower = qTF(0.025, mean, se, nu = nu),
+    .upper = qTF(0.975, mean, se, nu = nu)
+  ) %>%
+  ggplot() + 
+  geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) ) +
+  xlim(-3, 3)
+```
+
+
+```{r, plot-mean-ci, fig.width = 10, fig.height = 4, eval = FALSE}
+for(i in 1:n_regions) {
+  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
+    p <- data.sample %>%
+      filter( trial == j & region_idx == i ) %>%
+      mutate( 
+        mean = map_dbl(profit, mean),
+        se = map_dbl(profit, ~sd(.x)/sqrt(length(.x))),
+        .lower = qTF(0.025, mean, se, nu = nu),
+        .upper = qTF(0.975, mean, se, nu = nu)
+      ) %>%
+      ggplot(aes(x = NA, y = mean)) + 
+      geom_pointinterval(point_size = 5, interval_size = 12) +
+      geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
+      scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) ) +
+      ylab( "mean profit and 95% confidence interval" )
+    
+    ggsave(filename = paste0('../plots/ci/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
+  }
+}
+```
+
+
+### 4.1 Confidence Interval plots to be shown as an example of the task
+
+```{r}
+data.sample %>%
+  filter( trial == 3 & region_idx == 1 ) %>%
   rename( sample = profit, population = data) %>%
   mutate( 
     pop_mean = map_dbl(population, mean),
@@ -232,7 +286,6 @@ data.sample %>%
   scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) ) +
   xlim(-3, 3)
 ```
-
 
 ```{r, fig.width = 10, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {
@@ -389,5 +442,29 @@ p <- data.sim.boot  %>%
 
 pdf(file = "../figures/dots.pdf", useDingbats = FALSE, width = 5, height = 8)
 p
+dev.off()
+```
+
+
+```{r, scatterplot, fig.width = 6, fig.height = 4, warning = FALSE}
+p1 <- data.example %>%
+  unnest( cols = c(profit, store_idx) ) %>%
+  ggplot(aes(x = NA, y = profit)) + 
+  geom_jitter( width = 0.2, alpha = 0.7, size = 3 ) + 
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  ylim(limits) +
+  ylab( "profit for 20 stores from a region" )
+  
+p2 <- data.example %>%
+  ggplot() + 
+  geom_errorbar( aes(x = NA, ymin = .lower, ymax = .upper), width = 0, size = 3 ) +
+  geom_point( aes(x = NA, y = boot.mean), size = 8 ) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  ylim(limits) +
+  ylab( "mean profit and 95% confidence interval" )
+
+
+pdf(file = "../figures/ci_calc_plot.pdf", useDingbats = FALSE, width = 8, height = 10)
+cowplot::plot_grid(p1, p2, rel_widths = c(2, 1))
 dev.off()
 ```

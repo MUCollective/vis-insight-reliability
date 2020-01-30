@@ -90,9 +90,7 @@ data.sim <- crossing(
     effect_size = mu / sd
   ) %>%
   mutate(
-    mu = map2(p_h1, mu, ~ (rbinom(n_regions, 1, .x) * .y)), #map2( mu, p_h1, ~ c(rep(.x, .y), rep(0, n_regions - .y)) ),
-    # mu = map(mu, ~ sample(.x, size = n_regions) ),
-    # p_h1 = p_h1 / 10,
+    mu = map2(p_h1, mu, ~ (rbinom(n_regions, 1, .x) * .y)),
     trial = 1:nrow(.)
   ) %>%
   unnest( cols = c(mu) ) %>%
@@ -168,15 +166,14 @@ data.sample %>%
 
 ```{r, scatterplot, fig.width = 10, fig.height = 4, warning = FALSE}
 data.example <- data.sim.boot %>%
-  filter( trial == 2, region_idx == 3 ) %>% 
-  mean_qi(boot.mean)
+  filter( trial == 2, region_idx == 3 )
 ```
 
 Below, we generate these plots and save it as images to be used in the pilot study.
 
 ```{r, scatterplot_save, fig.width = 3, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {
-  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
+  for(j in 1:(n_trials * length(mu_sd))) {
     p <- data.sample %>%  
         unnest( cols = c(profit, store_idx) ) %>%
         filter( trial == j & region_idx == i ) %>%
@@ -185,7 +182,7 @@ for(i in 1:n_regions) {
         geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
         scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
         theme(legend.position = "none") +
-        ylab( "Profits from 20 stores" )
+        ylab( "profit" )
       
       ggsave(filename = paste0('../plots/raw-data/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg") 
   }
@@ -242,7 +239,7 @@ data.sample %>%
 
 ```{r, plot-mean-ci, fig.width = 10, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {
-  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
+  for(j in 1:(n_trials * length(mu_sd))) {
     p <- data.sample %>%
       filter( trial == j & region_idx == i ) %>%
       mutate( 
@@ -255,7 +252,7 @@ for(i in 1:n_regions) {
       geom_pointinterval(point_size = 5, interval_size = 12) +
       geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
       scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) ) +
-      ylab( "mean profit and 95% confidence interval" )
+      ylab( "profit" )
     
     ggsave(filename = paste0('../plots/ci/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
   }
@@ -303,7 +300,7 @@ for(i in 1:n_regions) {
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
     scale_color_manual( values=c("#C44232", "#333333")) +
     theme(legend.position = "none") +
-    ylab( "mean profit and 95% confidence interval" ) +
+    ylab( "profit" ) +
     xlim(-3, 3)
 
   ggsave(filename = paste0('../plots/example/profits-sol-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
@@ -326,7 +323,7 @@ for(i in 1:n_regions) {
     geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
     theme(legend.position = "none") +
-    ylab( "mean profit and 95% confidence interval" )
+    ylab( "profit" )
 
   ggsave(filename = paste0('../plots/example/profits-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
 }
@@ -409,7 +406,7 @@ data.sim.boot  %>%
 
 ```{r, pred-density, fig.width = 10, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {
-  for(j in 1:(n_trials * length(effect_sizes) * length(means))) {
+  for(j in 1:(n_trials * length(mu_sd))) {
     p <- data.sim.boot %>%
       filter( trial == j & region_idx == i ) %>%
       unnest( cols = c(boot.mean) ) %>%
@@ -417,7 +414,7 @@ for(i in 1:n_regions) {
       stat_halfeye(point_size = 5, interval_size = 8) +
       geom_hline( yintercept = 0, size = 1, alpha = 0.5, color = "red" ) +
       scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
-      ylab( "probability distribution of mean profit" )
+      ylab( "profit" )
 
     ggsave(filename = paste0('../plots/halfeye/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
   }
@@ -444,7 +441,7 @@ dev.off()
 
 
 ```{r, scatterplot, fig.width = 6, fig.height = 4, warning = FALSE}
-p1 <- data.example %>%
+p1 <- data.example %>% 
   unnest( cols = c(profit, store_idx) ) %>%
   ggplot(aes(x = NA, y = profit)) + 
   geom_jitter( width = 0.2, alpha = 0.7, size = 3 ) + 
@@ -452,16 +449,16 @@ p1 <- data.example %>%
   ylim(limits) +
   ylab( "profit for 20 stores from a region" )
   
-p2 <- data.example %>%
-  ggplot() + 
-  geom_errorbar( aes(x = NA, ymin = .lower, ymax = .upper), width = 0, size = 3 ) +
-  geom_point( aes(x = NA, y = boot.mean), size = 8 ) +
-  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  ylim(limits) +
-  ylab( "mean profit and 95% confidence interval" )
+p2 <- data.example %>% 
+  unnest( cols = c(boot.mean) ) %>%
+  ggplot( aes(x = NA, y = boot.mean) ) +
+  stat_halfeye(point_size = 5, interval_size = 8) +
+  geom_hline( yintercept = 0, size = 1, alpha = 0.5, color = "red" ) +
+  scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+  ylab( "probability distribution of mean profit" )
 
 
-pdf(file = "../figures/ci_calc_plot.pdf", useDingbats = FALSE, width = 8, height = 10)
+pdf(file = "../figures/pdf_calc_plot.pdf", useDingbats = FALSE, width = 8, height = 10)
 cowplot::plot_grid(p1, p2, rel_widths = c(2, 1))
 dev.off()
 ```

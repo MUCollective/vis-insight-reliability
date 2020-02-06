@@ -315,15 +315,15 @@ for(i in 1:n_regions) {
     filter(trial == 3 & region_idx == i) %>%
     rename(sample = profit, population = data) %>%
     mutate( 
-      pop_mean = limits[2] - 0.5,
-      mean = limits[2] -0.5,
-      se = 0.1,
+      pop_mean = limits[2] - 1 + runif(n()),
+      mean = limits[2] -1 + runif(n()),
+      se = runif(n()) * 0.1 + 0.1,
       .lower = qTF(0.025, mean, se, nu = nu),
       .upper = qTF(0.975, mean, se, nu = nu)
     ) %>%
     ggplot() + 
     geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-    geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
+    # geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
     geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
     scale_color_manual( values=c("#C44232", "#333333")) +

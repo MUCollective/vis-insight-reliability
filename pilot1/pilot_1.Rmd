@@ -1,0 +1,116 @@
+---
+title: "Pilot 1"
+output: html_notebook
+---
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Summary
+
+- Recruiting platform: Prolific
+  - study code 29ABE0A0
+  - base pay: $7
+  - estimated time: 40 min
+- Study website: https://mucollective.github.io/vis-insights-study/
+- Database at AWS
+- Exit survey at Qualtrics
+
+
+
+# Prolific results
+
+
+5e3d59338f20d3000a34aeb9
+8 Feb 2020, 10:20
+N/A
+TIMED-OUT
+
+5e3db42ae01a2602b2068256
+8 Feb 2020, 10:20
+00:23:56
+29ABE0A0
+AWAITING REVIEW
+
+
+5d9f8573ce3daf0015e3e400
+8 Feb 2020, 12:30
+00:19:18
+29ABE0A0
+AWAITING REVIEW
+
+```{r}
+# before approval
+df_prolific <- read.csv("pilot_1_prolific.csv")
+```
+
+```{r}
+summary(df_prolific)
+```
+
+
+## Select participants
+```{r}
+participants <- df_prolific %>%
+  filter(status == "AWAITING REVIEW") %>%
+  select(participant_id) %>%
+  rename(prolific_pid = participant_id)
+```
+
+
+
+# Qualtrics exit survey
+
+```{r}
+# contains many more fake responses
+df_qualtrics <- read.csv("pilot_1_qualtrics.csv") %>%
+  rename(prolific_pid = PROLIFIC_PID) 
+
+participants %>%
+  inner_join(df_qualtrics, by = "prolific_pid") %>%
+  select(prolific_pid, Q4, Q1, Q3)
+```
+
+# Database response records
+
+## Read and clean data
+
+```{r}
+df_db <- read.csv("pilot_1_db_response.csv")
+```
+
+```{r}
+summary(df_db)
+```
+Select participants
+
+```{r}
+df <- participants %>%
+  inner_join(df_db, by="prolific_pid")
+```
+
+
+## Individual payouts (for bonus pay)
+
+```{r}
+df %>%
+  group_by(prolific_pid) %>%
+  summarize(net_pay = tail(cumulative_pay, 1))
+```
+
+## Explore data
+
+
+```{r}
+df %>%
+  group_by(prolific_pid) %>%
+  mutate(p_trial_id = row_number()) %>%
+  mutate(trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay)))
+
+  ggplot(aes(p_trial_id, cumulative_pay, color = prolific_pid)) + 
+  geom_point() +
+  geom_vline(aes(xintercept = 30))+
+  geom_vline(aes(xintercept = 60))
+```
+

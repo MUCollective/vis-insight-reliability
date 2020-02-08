@@ -90,8 +90,38 @@ df <- participants %>%
   inner_join(df_db, by="prolific_pid")
 ```
 
+Problem: cumulative_pay not starting from 0 for `5d9f8573ce3daf0015e3e400`
 
-## Individual payouts (for bonus pay)
+```{r}
+df %>%
+  group_by(prolific_pid) %>%
+  do( head(.,3)) %>%
+  select(prolific_pid, cumulative_pay)
+```
+```{r}
+calc_payout <- function(tp, tn, fp, fn, a){
+  a <- a/100
+  tp* 20 + 
+    tn* 20 + 
+    fp* round(((1-a)/a) * 20) + 
+    fn* 20
+}
+```
+
+
+[] Validate calculation of payout per trial
+
+```{r}
+df %>%
+  group_by(prolific_pid) %>%
+  mutate(alt_payout = calc_payout(tp, tn, fp, fn, incentive)) %>%
+  mutate(trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay))) %>%
+  mutate(diff = alt_payout - trial_pay) %>%
+  .$diff %>%
+  sum()
+```
+
+## Individual final payouts (for bonus pay)
 
 ```{r}
 df %>%
@@ -103,14 +133,26 @@ df %>%
 
 
 ```{r}
-df %>%
+df <- df %>%
   group_by(prolific_pid) %>%
   mutate(p_trial_id = row_number()) %>%
+  group_by(prolific_pid, incentive) %>%
+  mutate(block_id = row_number()) %>%
   mutate(trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay)))
+```
 
-  ggplot(aes(p_trial_id, cumulative_pay, color = prolific_pid)) + 
+
+```{r}
+df %>%
+  ggplot(aes(block_id, trial_pay, color = prolific_pid)) + 
   geom_point() +
-  geom_vline(aes(xintercept = 30))+
-  geom_vline(aes(xintercept = 60))
+  labs(x = "Trial # within a block", y = "Payout per trial") +
+  facet_grid(. ~ incentive/100)
+  
+```
+```{r}
+df %>%
+  group_by(incentive) %>%
+  summarize(mean(trial_pay))
 ```
 

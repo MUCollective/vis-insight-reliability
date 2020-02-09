@@ -5,6 +5,7 @@ output: html_notebook
 ```{r}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(ggbeeswarm)
 ```
 
 # Summary
@@ -42,7 +43,8 @@ AWAITING REVIEW
 
 ```{r}
 # before approval
-df_prolific <- read.csv("pilot_1_prolific.csv")
+# df_prolific <- read.csv("pilot_1_prolific_first_two.csv")
+df_prolific <- read.csv("pilot_1_prolific_alles.csv")
 ```
 
 ```{r}
@@ -53,7 +55,7 @@ summary(df_prolific)
 ## Select participants
 ```{r}
 participants <- df_prolific %>%
-  filter(status == "AWAITING REVIEW") %>%
+  filter(status %in% c("AWAITING REVIEW", "APPROVED"))%>%
   select(participant_id) %>%
   rename(prolific_pid = participant_id)
 ```
@@ -77,7 +79,7 @@ participants %>%
 ## Read and clean data
 
 ```{r}
-df_db <- read.csv("pilot_1_db_response.csv")
+df_db <- read.csv("pilot_1_db_all.csv")
 ```
 
 ```{r}
@@ -95,7 +97,7 @@ Problem: cumulative_pay not starting from 0 for `5d9f8573ce3daf0015e3e400`
 ```{r}
 df %>%
   group_by(prolific_pid) %>%
-  do( head(.,3)) %>%
+  do( tail(.,1)) %>%
   select(prolific_pid, cumulative_pay)
 ```
 ```{r}
@@ -144,12 +146,33 @@ df <- df %>%
 
 ```{r}
 df %>%
-  ggplot(aes(block_id, trial_pay, color = prolific_pid)) + 
+  ggplot(aes(block_id, trial_pay)) + 
   geom_point() +
   labs(x = "Trial # within a block", y = "Payout per trial") +
-  facet_grid(. ~ incentive/100)
-  
+  facet_grid(prolific_pid ~ incentive/100)
+ 
+# ggsave("pilot_1_all_participants_pertrial_payout.pdf", width = 6, height = 24) 
 ```
+
+
+```{r}
+df %>%
+  ggplot(aes(
+    x = factor(incentive/100), 
+    y = fp, 
+    color = prolific_pid)) + 
+  geom_jitter() + 
+  labs(x = "alpha", y = "# of false positives", title = "Each dot is a trial, colored by participants")
+```
+```{r}
+df %>%
+  group_by(incentive, fp) %>%
+  ggplot(aes(fp)) +
+  geom_bar() + 
+  facet_grid(. ~ incentive/100) +
+  labs(x = "# of false positives")
+```
+
 ```{r}
 df %>%
   group_by(incentive) %>%

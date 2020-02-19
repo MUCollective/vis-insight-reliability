@@ -331,9 +331,29 @@ for(i in 1:n_regions) {
     ylab( "profit" ) +
     xlim(-3, 3)
 
-  ggsave(filename = paste0('../plots/attention/profit-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
+  ggsave(filename = paste0('../plots/attention/profit-','ci' ,'-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
 }
 ```
+
+
+```{r, fig.width = 10, fig.height = 4, eval = FALSE}
+for(i in 1:n_regions) {
+  p <- 
+    tibble(y = rep(limits[2] - 1.5, sample_size)) %>%
+    ggplot() + 
+    geom_point(aes(x = NA, y = y), position = "jitter") + 
+    geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
+    scale_y_continuous( limits = limits, breaks = seq(limits[[1]], limits[[2]], by = 2) )  +
+    theme(legend.position = "none") +
+    ylab( "profit" )
+
+  ggsave(filename = paste0('../plots/attention/profit-','raw-data' ,'-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
+}
+```
+```
+
+
+
 
 ```{r, fig.width = 10, fig.height = 4, eval = FALSE}
 for(i in 1:n_regions) {

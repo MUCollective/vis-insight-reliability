@@ -357,7 +357,7 @@ for(i in 1:n_region[[2]]) {
 #### 3.1 Confidence Interval plots to be shown as an example of the task
 
 ```{r}
-data.sim.8reg %>%
+data.sim.12reg %>%
   filter( trial == 3 & region_idx == 1 ) %>%
   rename( sample = data, population = mean) %>%
   mutate( 
@@ -368,8 +368,8 @@ data.sim.8reg %>%
     .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
   ) %>%
   ggplot() + 
-  geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-  geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
+  geom_pointinterval(aes(x = 0, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
+  #geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
   geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
   scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) ) +
   xlim(-3, 3)
@@ -388,8 +388,8 @@ for(i in 1:n_region[[1]]) {
       .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
     ) %>%
     ggplot() + 
-    geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-    geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
+    geom_pointinterval(aes(x = 0, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
+    #geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
     geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
     scale_color_manual( values=c("#C44232", "#333333")) +
@@ -397,7 +397,7 @@ for(i in 1:n_region[[1]]) {
     ylab( "profit" ) +
     xlim(-3, 3)
 
-  ggsave(filename = paste0('../plots/example/profits-sol-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
+  ggsave(filename = paste0('../plots/example/profits-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
 }
 ```
 

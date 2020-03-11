@@ -378,18 +378,18 @@ data.sim.12reg %>%
 ```{r, fig.width = 10, fig.height = 4, eval = FALSE}
 for(i in 1:n_region[[1]]) {
   p <- data.sim.12reg %>%
-    filter(trial == 3 & region_idx == i) %>%
+    filter(trial == 3) %>% # & region_idx == i) %>%
     rename(sample = data, population = mean) %>%
     mutate( 
-      pop_mean = map_dbl(population, mean),
+      pop_mean = mu,
       mean = map_dbl(sample, mean),
       se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
       .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
       .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
     ) %>%
     ggplot() + 
-    geom_pointinterval(aes(x = 0, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-    #geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
+    geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
+    geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
     geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
     scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
     scale_color_manual( values=c("#C44232", "#333333")) +
@@ -397,7 +397,7 @@ for(i in 1:n_region[[1]]) {
     ylab( "profit" ) +
     xlim(-3, 3)
 
-  ggsave(filename = paste0('../plots/example/profits-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
+  ggsave(filename = paste0('../plots/example/profits-sol-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
 }
 ```
 

@@ -1,0 +1,451 @@
+---
+title: "Pilot 1"
+output:
+  html_document:
+    df_print: paged
+---
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rstan)
+library(brms)
+library(dbplyr)
+library(modelr)
+library(tidybayes)
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+# Summary
+
+- Recruiting platform: Prolific
+  - study code 29ABE0A0
+  - base pay: $7
+  - estimated time: 40 min
+- Study website: https://mucollective.github.io/vis-insights-study/
+- Database at AWS
+- Exit survey at Qualtrics
+
+
+
+## Participants
+
+We load the data provided by Prolific and the logs that we collect in our database. We assign each participant a unique user ID. We then select participants which have completed the study (codes: APPROVED or AWAITING REVIEW)
+
+```{r}
+# df_prolific <- read.csv("pilot_1_prolific_first_two.csv")
+df_prolific <- read.csv("../data/pilot-data/pilot_1_prolific.csv")
+# df_logs <- read.csv("../data/pilot-data/userlog.csv") # not relevant
+
+df2_prolific <- read.csv("../data/pilot-data/pilot_2_prolific.csv")
+
+completed_codes <- c("AWAITING REVIEW", "APPROVED")
+
+#Those who completed
+participants <- rbind(df_prolific, df2_prolific) %>%
+  filter(status %in% completed_codes) %>%
+  rename(prolific_pid = participant_id)
+```
+
+
+```{r}
+participants %>%
+  summarise(time = median(time_taken))
+```
+
+
+## Database response records and data cleaning
+
+We store each participants' responses in a database. We import those responses and join them with the dataframe which contains the list of participants who have successfully completed the study. We also include the **correct** responses i.e. whether a region is actually profitable or not based on the total population, and not just the sample provided.
+
+We wrangle the data into a format convenient for subsequent modeling and add columns which help us identify group-level effects. Since each participant in our pilot study participated in 90 trials, we index the trial number for each participant. The trials are also divided into blocks of three, which we index separately. Finally, we compute the payout for each trial.
+
+```{r}
+# The "solutions" to participant trials
+df_soln <- read.csv("../data/pilot-data/solutions.csv") %>% 
+  group_by(trial) %>%
+  summarise(
+    positives = sum(profitable == TRUE),
+    negatives = sum(profitable == FALSE),
+    is_profit = list(profitable)
+  )
+
+# Read data
+df_db <- rbind(
+  read.csv("../data/pilot-data/pilot_1_db.csv"),
+  read.csv("../data/pilot-data/pilot_2_db.csv"),
+  read.csv("../data/pilot-data/pilot_3_db.csv")
+)
+
+# Select participants
+df <- participants %>%
+  select(prolific_pid) %>%
+  inner_join(df_db, by="prolific_pid") %>%
+  inner_join(df_soln, by = "trial") %>%
+  arrange(id) %>%
+  group_by(prolific_pid) %>%
+  mutate(p_trial_id = row_number()) %>% # trial number 1...90
+  group_by(prolific_pid, incentive) %>%
+  mutate(
+    alpha = (incentive/100),
+    block_id = row_number(), # trial number within a bloc 1...30
+    block = floor((p_trial_id-1) / 30) + 1,
+    trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay)),
+    fp = -1 * fp, # make it the number of false positives (count >= 0)
+    fn = -1 * fn
+  ) %>%
+  ungroup() %>%
+  select( -c(session_id, duration, incentive, trial_pay) )
+```
+
+```{r}
+df %>%
+  group_by(alpha, condition) %>%
+  summarise(n = n())
+```
+
+
+### Evaluating problems in data collection
+
+We check to see if there are any problems in data collection. Below, we check if the cumulative column is being calculated accurately, by comparing it to the calculation using the actual number of true positive, true negatives, false positives and false negatives that we record directly in the database. We find, in the first pilot, 3 instances where this is violated.
+
+```{r}
+df %>% 
+  arrange(id) %>%
+  group_by(prolific_pid) %>%
+  mutate(calculated_trial_payout = (tp + tn - fn)*20 - fp*20*round((1 - alpha)/alpha)) %>%
+  mutate(diffed_trial_payout = c(head(cumulative_pay, 1), diff(cumulative_pay))) %>%
+  filter(diffed_trial_payout != calculated_trial_payout)
+```
+
+## Preliminary data exploration
+
+Tally the false positives by alpha levels
+
+```{r}
+df %>%
+  group_by(alpha, fp) %>%
+  ggplot(aes(fp)) +
+  geom_bar() + 
+  facet_grid(. ~ alpha) +
+  labs(x = "# of false positives")
+```
+
+
+
+## Exploratory models
+
+### F-1 score: using ground truth labels
+
+We first calculated the variable `f1 score` for each participant's responses in each trial. The `f1 score` is going to be a value between 0 and 1, so we can then predict this value using a beta regression model. In the figure below, we can see the density at zero and one which suggests that we should use a zero-one inflated beta regression. We calculate the `f1 score` using the ground truth labels (the actual data generating values which the participants are not aware of). We use `incentive` and `trial id` as a predictor as we vary these two variables in our study. We also model a unique intercept for each participant.
+
+```{r}
+df.f1.1 <- df %>%
+  filter(alpha == 0.1 ) %>%
+  ungroup() %>% 
+  mutate( 
+    condition = ifelse(condition == "raw-data", "rawdata", "ci"),
+    beta = 1,
+    f1 = ((1 + beta^2)*tp)/(tp*(1+beta^2) + fn*(beta^2) + fp),
+    alpha = factor(alpha)
+  ) %>%
+  select(-c(responses, tp:fn, positives:is_profit, id, cumulative_pay)) %>%
+  filter(prolific_pid != "5e39b4e8eed08202335f88bb")
+```
+
+
+```{r}
+write.csv(df.f1.1, file = "../data-f1-score-vis-insights.csv", row.names = FALSE)
+
+# df.f1.1 <- read.csv(file = "../data-f1-score-vis-insights.csv", row.names = FALSE)
+
+df.f1.1 %>%
+  magrittr::extract2("f1") %>%
+  hist( breaks = 100 )
+```
+
+## Model 1
+
+### Prior predictive checks
+
+```{r, eval = FALSE}
+priors_beta = c(
+  prior(normal(0, 0.5), class = b),
+  prior(normal(0, 0.5), class = b, dpar = phi),
+  prior(normal(0, 1), class = Intercept),
+  prior(normal(2, 1), class = Intercept, dpar = phi),
+  prior(beta(1, 2), class = coi),
+  prior(beta(1, 2), class = zoi),
+  prior(exponential(2), class = sd)
+)
+
+fit_beta.pp <- brm(bf(f1 ~ condition*block_id + (1|prolific_pid),  phi ~ condition*block_id), family = zero_one_inflated_beta, prior = priors_beta, chains = 2, cores = 2, data = df.f1.1, sample_prior = "only", control = list(adapt_delta = 0.9995, max_treedepth = 15))
+```
+
+```{r, eval = FALSE}
+priors_beta = c(
+  prior(normal(0, 0.5), class = b),
+  prior(normal(0, 0.5), class = b, dpar = phi),
+  prior(normal(0, 1), class = Intercept),
+  prior(normal(2, 1), class = Intercept, dpar = phi),
+  prior(beta(1, 2), class = coi),
+  prior(beta(1, 2), class = zoi),
+  prior(exponential(2), class = sd)
+)
+
+# fit_beta.pilot <- brm(bf(f1 ~ condition*block_id + (1|prolific_pid),  phi ~ condition*block_id), family = zero_one_inflated_beta, prior = priors_beta, chains = 2, cores = 2, data = df.f1.1, control = list(adapt_delta = 0.9, max_treedepth = 15))
+
+#saveRDS(fit_beta.pilot, "../models/zoibreg-f1.rds")
+```
+
+```{r}
+fit_beta.pilot <- readRDS("../models/zoibreg-f1.rds")
+
+summary(fit_beta.pilot)
+```
+
+
+```{r}
+draws.f1_betaregl <- data_grid(df.f1.1, condition, block_id) %>%
+  add_fitted_draws(fit_beta.pilot, re_formula = NA)
+```
+
+#### Multiple comparisons
+
+Benjamini-Hochberg procedure is one correction strategy to reduce the false discovery rate. We show that, with the amount ofn information available to users, Benjamini-Hochberg would provide the optimal decision making. We compute the f1-score that would be received by adhering exactly to the Benjamini-Hochberg strategy.
+
+```{r, warning = FALSE}
+# We create a function for bootstrap samples
+bootstrap_samples <- function(x, .seed) {
+  if (is_list(x)) x = flatten_dbl(x)
+  n = length(x)
+  set.seed(.seed)
+  sample(x, length(x), replace = TRUE)
+}
+
+load("../data/simulated-data/simulated_data.RData")
+
+df.f1_bh <- select(data.sample, -c(sd, effect_size, mu_sd_pairs, data, store_idx, region, baseline, p_h1, idx) ) %>%
+  # mutate( .id = list(1:1e3) ) %>%
+  # unnest(cols = c(.id)) %>%
+  # mutate( boot.data = map2(profit, .id, ~ bootstrap_samples(.x, .y))) %>%
+  mutate(
+    p_value = round(map_dbl(profit, ~ t.test(.x)$p.value), 5),
+    alpha = 0.05
+  ) %>%
+  group_by(trial) %>%
+  arrange(trial, p_value)
+
+f1.bh <- df.f1_bh %>%
+  mutate( 
+    rank = 1:10,
+    critical_value = rank/10 * alpha,
+    bh_profit = ifelse(p_value < critical_value, TRUE, FALSE),
+    is_profit = ifelse(mu > 0, TRUE, FALSE)
+  ) %>%
+  select(-c(mu, profit)) %>%
+  mutate(
+    tp = ifelse(bh_profit == TRUE & is_profit == TRUE, 1, 0),
+    tn = ifelse(bh_profit == FALSE & is_profit == FALSE, 1, 0),
+    fp = ifelse(bh_profit == TRUE & is_profit == FALSE, 1, 0),
+    fn = ifelse(bh_profit == FALSE & is_profit == TRUE, 1, 0)
+  ) %>%
+  summarise(tp = sum(tp), tn = sum(tn), fp = sum(fp), fn = sum(fn)) %>% 
+  mutate( 
+    beta = 0.1,
+    f1 = ((1 + beta^2)*tp)/(tp*(1+beta^2) + fn*(beta^2) + fp)
+  ) %>%
+  ungroup() %>%
+  summarise( f1 = mean(f1) )
+```
+
+```{r}
+data_grid(df.f1.1, condition, block_id) %>%
+  add_fitted_draws(fit_beta.pilot, n = 500, re_formula = NA) %>%
+  ggplot() +
+  geom_line(aes(block_id, .value, group = .draw), alpha = 0.1) + 
+  geom_hline(data = f1.bh, aes(yintercept = f1), color = "red") +
+  # geom_line(data = df.f1_bh, aes(trial, f1), color = "red", alpha = 0.5) +
+  #coord_cartesian(ylim = c(0.5, 1)) +
+  facet_grid(~condition)
+```
+
+
+
+```{r, warning = FALSE}
+df.bh <- df %>% 
+  select(-c(tp, tn, fp, fn, positives, negatives, block_id, block)) %>%
+  left_join(df.bh_correction, by = "trial") %>%
+  unnest(cols = c(p_value, region_idx, is_profit)) %>%
+  group_by(prolific_pid, p_trial_id, region_idx) %>%
+  mutate(
+    responses = map(strsplit(as.character(responses), ","), as.numeric),
+    selected =  any(region_idx %in% unlist(responses))
+  ) %>%
+  ungroup() %>%
+  group_by(prolific_pid, p_trial_id) %>%
+  arrange(prolific_pid, p_trial_id, p_value) %>%
+  select(-responses) %>%
+  mutate( 
+    rank = 1:10,
+    critical_value = rank/10 * alpha,
+    bh_profit = ifelse(p_value < critical_value, TRUE, FALSE),
+    bh_optimal_payout = ifelse(bh_profit == is_profit, 20, ifelse(bh_profit == TRUE & is_profit == FALSE, -20*(1-alpha)/alpha, -20))
+  )
+```
+
+```{r}
+select(data.sample, -c(mu, sd, effect_size, mu_sd_pairs, data, store_idx, region, baseline, p_h1, idx) ) %>%
+  mutate(
+    p_value = round(map_dbl(profit, ~ t.test(.x)$p.value), 5),
+    alpha = 0.05 #map(trial, ~ c(0.1, 0.05, 0.01))
+  ) %>%
+  unnest(cols = c(alpha)) %>%
+  group_by(trial, alpha) %>%
+  arrange(alpha, trial, p_value) %>%
+  mutate(
+    rank = 1:10,
+    critical_value = rank/10 * 0.05,
+    bh_profit = ifelse(p_value < critical_value, TRUE, FALSE)
+  ) %>%
+  summarise( to_select = sum(bh_profit)) %>%
+  ungroup() %>%
+  mean_qi(to_select)
+```
+
+
+### Beta regression model
+
+Simulating the outcome of a completely random selection process
+
+```{r}
+
+
+df.random_strategy_payout <- select(data.sample, -c(sd, effect_size, mu_sd_pairs, data, store_idx, region, baseline, p_h1, idx) ) %>%
+  mutate(p_value = round(map_dbl(profit, ~ t.test(.x)$p.value), 5)) %>%
+  group_by(trial) %>% 
+  ungroup() %>%
+  mutate( 
+    index = 1:nrow(.),
+    .sim = map(index, ~ 1:1e3),
+    random_selection = map(index, ~rbinom(1e3, 1, 0.5))
+  ) %>%
+  unnest(cols = c(random_selection, .sim)) %>%
+  mutate( 
+    payoff = ifelse(random_selection == 1 & is_profit == FALSE, -19, ifelse(random_selection == 0 & is_profit == TRUE, -1, 1))
+  ) %>%
+  group_by(trial, .sim) %>%
+  summarise(payoff = sum(payoff)) %>%
+  group_by(trial) %>%
+  summarise( mean_payout = mean(payoff)) #, sd = sd(payoff)/sqrt(1e3) ) %>%
+  #mutate( .lower = mean_payout + qnorm(0.025)*sd, .upper = mean_payout + qnorm(0.975)*sd  )
+```
+
+
+We first calculated the variable `expected over optimal` which indicates in each trial, a participant's payoff as a fraction of the optimal payoff. We then predict this fraction using a beta regression model. We use `incentive` and `trial id` as a predictor as we vary these two variables in our study. We also model a unique intercept for each participant.
+
+```{r}
+inv.function <- function(y, ybar) {
+  round((exp(y))/(exp(y) + exp(ybar)), 4)
+}
+
+df.betareg <- df %>%
+  ungroup() %>% 
+  inner_join(df.random_strategy_payout, by = "trial") %>%
+  mutate( 
+    selected_positives = tp + abs(fp),
+    payoff_lower = - negatives * round((1 - alpha)/alpha) - positives,
+    payoff_upper = 10, #number of regions
+    payoff_trial = (tn + tp - fn)  - fp * round((1 - alpha)/alpha),
+    payoff_trial_normalised = (payoff_trial + abs(payoff_lower)),
+    alpha = factor(alpha),
+    expected_over_optimal = (payoff_trial + abs(payoff_lower))/(payoff_upper + abs(payoff_lower))
+  ) %>%
+  filter( alpha == 0.05 )
+
+df.betareg
+```
+
+
+```{r}
+priors_beta = c(
+  prior(normal(0, 1), class = b),
+  prior(normal(2, 2), class = Intercept),
+  prior(normal(2, 2), class = Intercept, dpar = phi),
+  prior(normal(0, 1), class = b, dpar = phi),
+  prior(student_t(3, 0, 1), class = sd)
+)
+
+# fit_beta <- brm(bf(expected_over_optimal ~ incentive*p_trial_id + (1|prolific_pid), 
+#                   phi ~ incentive*p_trial_id), prior = priors_beta, 
+#                   family = Beta, data = df.betareg, chains = 2, cores = 2, 
+#                   control = list(adapt_delta = 0.99, max_treedepth = 15, stepsize = 0.005))
+
+#fit_beta <- readRDS(file = "models/beta-reg.rds")
+summary(fit_beta)
+
+get_prior(bf(expected_over_optimal ~ incentive*p_trial_id + (1|prolific_pid), 
+                   phi ~ incentive*p_trial_id), prior = priors_beta, 
+                family = Beta, data = df.betareg)
+```
+
+
+```{r}
+data_grid(data = df.model, p_trial_id = 1:90, incentive = as.factor(c(1, 5, 10))) %>%
+  add_predicted_draws(fit_beta, re_formula = NA) %>%
+  rename( trial = p_trial_id ) %>%
+  ungroup() %>%
+  ggplot() +
+  stat_lineribbon(aes(x = trial, y = gtools::logit(.prediction), group = incentive), .width = c(.95, .8, .5), color = "#08519C") +
+  facet_grid(. ~ incentive) +
+  # ylim(c(0, 1)) +
+  scale_fill_brewer()
+```
+
+### Zero inflated binomial model
+
+In this model, we predict the probability of a person to indicate a region as positive in each trial. We use 
+
+```{r}
+priors_zib = c(
+    prior(normal(0, 1), class = b),
+    prior(normal(0, 1), class = Intercept),
+    prior(normal(2, 2), dpar = zi),
+    prior(exponential(2), class = sd)
+)
+
+# fit_zib <- brm(bf(selected_positives | trials(10) ~ incentive*block_id*block + (1|prolific_pid), 
+#                 zi ~ incentive*block_id*block), prior = priors_zib, 
+#                 family = zero_inflated_binomial, data = df.model, chains = 2, cores = 2)
+
+# saveRDS(fit_zib, file = "models/fit-zib.rds")
+# fit_zib <- readRDS(file = "models/fit-zib.rds")
+summary(fit_zib)
+```
+
+  
+```{r}
+data_grid(data = df.model, block_id = 1:30, block = 1:3, incentive = as.factor(c(1, 5, 10))) %>%
+  add_fitted_draws(fit_zib, dpar = c("mu", "zi"), n = 500, re_formula = NA) %>%
+  ungroup() %>%
+  mutate( trial_id = (block - 1) * 30 + block_id ) %>%
+  ggplot() +
+  geom_line(aes(x = trial_id, y = mu, colour = ordered(block), group = paste(block, .draw)), alpha = 1/10) +
+  facet_grid(incentive ~ .) +
+  scale_color_brewer(palette = "Dark2")
+```
+
+```{r}
+data_grid(data = df.model, block_id = 1:30, block = 1:3, incentive = as.factor(c(1, 5, 10))) %>%
+  add_fitted_draws(fit_zib, dpar = c("mu", "zi"), n = 500, re_formula = NA) %>%
+  ungroup() %>%
+  mutate( trial_id = (block - 1) * 30 + block_id ) %>%
+  ggplot() +
+  geom_line(aes(x = trial_id, y = zi, colour = ordered(block), group = paste(block, .draw)), alpha = 1/10) +
+  scale_color_brewer(palette = "Dark2") +
+  facet_grid(incentive ~ .)
+```
+
+
+

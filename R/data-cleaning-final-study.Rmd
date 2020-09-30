@@ -1,0 +1,180 @@
+---
+title: "Data cleaning and wrangling for \"Odds and Insights: Do Uncertainty Visualisations Improve Qualityof Decisions in Visual Analysis\""
+date: '`r Sys.time()`'
+author: "Abhraneel Sarma"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: true
+    theme: spacelab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(magrittr)
+```
+
+## Participants
+
+We load the data provided by Prolific and the logs that we collect in our database. We assign each participant a unique user ID. We then select participants which have completed the study (codes: APPROVED or AWAITING REVIEW)
+
+
+```{r}
+prolific_fnames <- list.files("../data/final-study/", pattern = "final_prolific_(.+).csv")
+  
+participants <- 
+  map_df(
+    prolific_fnames,
+    ~ read_csv(paste0("../data/final-study/", .x), col_types = cols(time_taken = col_character())) %>%
+      mutate(vis = gsub("final_prolific_(.*).csv", "\\1", .x))
+  ) %>%
+  mutate(prolific_pid = participant_id ) %>%
+  filter(status == "AWAITING REVIEW" | status == "APPROVED")
+```
+
+
+## Database response records and data cleaning
+
+We store each participants' responses in a database. We import those responses and join them with the dataframe which contains the list of participants who have successfully completed the study. We also include the **correct** responses i.e. whether a region is actually profitable or not based on the total population, and not just the sample provided.
+
+We wrangle the data into a format convenient for subsequent modeling and add columns which help us identify group-level effects. Since each participant in our pilot study participated in 90 trials, we index the trial number for each participant. The trials are also divided into blocks of three, which we index separately. Finally, we compute the payout for each trial.
+
+```{r}
+# The "solutions" to participant trials
+df_soln <- read.csv("../data/true_effects.csv") %>% 
+  group_by(trial, nregions) %>%
+  summarise(
+    positives = sum(is_profit == TRUE),
+    negatives = sum(is_profit == FALSE),
+    is_profit = list(is_profit),
+    .groups = "drop"
+  )
+
+# Read data
+df_db <- read.csv("../data/final-study/final_db_allconds.csv")
+
+# Select participants
+df <- participants %>%
+  select(prolific_pid, session_id, completed_date_time) %>%
+  inner_join(df_db, by = c("prolific_pid", "session_id")) %>%
+  mutate(nregions = tp + tn + abs(fp) + abs(fn)) %>%
+  inner_join(df_soln, by = c("trial", "nregions")) %>%
+  arrange(id) %>%
+  group_by(prolific_pid) %>%
+  mutate(
+    trial_id = row_number(), # trial number 1...90
+    ntrials = nregions,
+    nregions = as.factor(nregions)
+  ) %>% 
+  group_by(prolific_pid, incentive) %>%
+  mutate(
+    alpha = (incentive/100),
+    block_id = row_number(), # trial number within a bloc 1...30
+    block = floor((trial_id - 1) / 35) + 1,
+    trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay)),
+    fp = -1 * fp, # make it the number of false positives (count >= 0)
+    fn = -1 * fn
+  ) %>%
+  ungroup() %>%
+  filter(flags == "") %>%
+  select( -c(duration, incentive, trial_pay, responses, cumulative_pay, flags, positives:is_profit) )
+```
+
+First we check if the data is complete (by filtering out all participants whose n is not 70):
+
+```{r}
+df %>%
+  group_by(condition, prolific_pid, session_id) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  filter( n != 70 )
+```
+
+
+Above, we see that there's one participant whose responses are not complete. Participant with prolific_pid = "5c6c403c3dbfc80001abf9f4" completed only one trial (out of 70), and hence was excluded. Most other responses which were excluded were rejected on Prolific. Further 3 participants completed the study twice, as we didn't anticipate this happening, and hence this was not a preregistered criteria we exclude the second block of trials by these participants.
+
+```{r}
+df %>%
+  filter((prolific_pid != "5c6c403c3dbfc80001abf9f4") & !(session_id %in% c("5eb9e7d910e3631221edec6c", "5ebaf0285b160109e4db83bf", "5ebdb036e779750e69dc04e5"))) %>% 
+  group_by(condition) %>%
+  summarise(n = n() / 70, .groups = "drop")
+```
+
+
+```{r}
+df.adj <- df %>%
+  filter((prolific_pid != "5c6c403c3dbfc80001abf9f4") & !(session_id %in% c("5eb99d9a309df40bf582e7f3", "5ebb422be7d9a811a6b845c0", "5ebdb036e779750e69dc04e5"))) %>%
+  group_by(prolific_pid) %>%
+  mutate(
+    condition = as.character(condition),
+    condition = replace(condition, condition == "raw-data", "raw_data"),
+    condition = replace(condition, condition == "hops-1", "hops_mean"),
+    condition = replace(condition, condition == "hops-2", "hops_bootstrap"),
+    # due to flags, some of the recorded IDs are > 70
+    # adjust and scale the trial_id from (1, 70) -> (-1, 1)
+    adj_trial_id = (1:70)/35 - 1
+  ) %>% ungroup()
+
+## check the adjusted trial id:
+rethinking::dens(df.adj$adj_trial_id)
+```
+
+```{r}
+write.csv(df.adj, "../data/final-study-cleaned.csv", row.names = FALSE)
+```
+
+
+## Estimating results from the Benjamini Hochberg procedure
+
+Benjamini Hochberg is a procedure for multiple comparisons correction. It controls the false discovery rate at 5%. In this context, it provides a reference point for optimal behavior for the task that we are asking participants to perform. Below, we compute the results (number of TP/TN/FP/FN) of performing the tests using the BH procedure in each of the conditions (number of trials = 8 or 12).
+
+```{r}
+data.sample <- rbind(
+  mutate(readRDS("../data/simulated_data_12regions.rds"), nregions = 12), 
+  mutate(readRDS("../data/simulated_data_8regions.rds"), nregions = 8)
+)
+
+# this stores the BH values for each trial
+df.bh <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) ) %>%
+  mutate(
+    p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
+    alpha = 0.05
+  ) %>%
+  group_by(nregions, trial) %>%
+  arrange(trial, nregions, p_value) %>%
+  mutate( 
+    rank = ifelse(nregions == 8, 1:8, 1:12),
+    critical_value = rank/nregions * alpha,
+    bh_profit = ifelse(p_value < critical_value, TRUE, FALSE),
+    is_profit = ifelse(mu > 0, TRUE, FALSE)
+  ) %>%
+  select(-c(mu, data)) %>%
+  mutate(
+    tp = ifelse(bh_profit == TRUE & is_profit == TRUE, 1, 0),
+    tn = ifelse(bh_profit == FALSE & is_profit == FALSE, 1, 0),
+    fp = ifelse(bh_profit == TRUE & is_profit == FALSE, 1, 0),
+    fn = ifelse(bh_profit == FALSE & is_profit == TRUE, 1, 0)
+  ) %>%
+  group_by(nregions)
+
+df.bh %>%
+  write.csv("../data/final-study-bh.csv")
+```
+
+
+
+```{r}
+data.fp_rate <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) ) %>%
+  mutate(
+    p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
+    is_profit = ifelse(mu > 0, TRUE, FALSE),
+    selected = ifelse(p_value < 0.05, TRUE, FALSE),
+    uncorrected_fp = ifelse(p_value < 0.05 & !is_profit, TRUE, FALSE)
+  ) %>%
+  rename(ntrials = nregions) %>%
+  group_by(ntrials) %>%
+  summarise(uncorrected_fp = mean(uncorrected_fp) / mean(selected), .groups = "drop")
+```
+

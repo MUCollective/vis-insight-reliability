@@ -1,0 +1,322 @@
+---
+title: "Pilot 1"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rstan)
+library(brms)
+library(dbplyr)
+library(modelr)
+library(tidybayes)
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+# Summary
+
+- Recruiting platform: Prolific
+  - study code 29ABE0A0
+  - base pay: $7
+  - estimated time: 40 min
+- Study website: https://mucollective.github.io/vis-insights-study/
+- Database at AWS
+- Exit survey at Qualtrics
+
+
+
+## Participants
+
+We load the data provided by Prolific and the logs that we collect in our database. We assign each participant a unique user ID. We then select participants which have completed the study (codes: APPROVED or AWAITING REVIEW)
+
+```{r}
+# df_prolific <- read.csv("pilot_1_prolific_first_two.csv")
+df_prolific <- read.csv("../data/pilot-data/pilot_1_prolific.csv")
+# df_logs <- read.csv("../data/pilot-data/userlog.csv") # not relevant
+
+df2_prolific <- read.csv("../data/pilot-data/pilot_2_prolific.csv")
+
+df3_prolific <- rbind(
+  read.csv("../data/pilot-data/pilot_3_prolific_dotplot.csv"),
+  read.csv("../data/pilot-data/pilot_3_prolific_halfeye.csv"),
+  read.csv("../data/pilot-data/pilot_3_prolific_raw-data.csv"),
+  read.csv("../data/pilot-data/pilot_3_prolific_ci.csv")
+)
+
+completed_codes <- c("AWAITING REVIEW", "APPROVED")
+
+#Those who completed
+participants <- rbind(df_prolific, df2_prolific) %>%
+  filter(status %in% completed_codes & participant_id != "5d76ac914c93440001c03fd7") %>%
+  rename(prolific_pid = participant_id)
+```
+
+
+```{r}
+rbind(df_prolific, df2_prolific, df3_prolific) %>%
+  filter(!(status %in% completed_codes))
+```
+
+
+
+## Database response records and data cleaning
+
+We store each participants' responses in a database. We import those responses and join them with the dataframe which contains the list of participants who have successfully completed the study. We also include the **correct** responses i.e. whether a region is actually profitable or not based on the total population, and not just the sample provided.
+
+We wrangle the data into a format convenient for subsequent modeling and add columns which help us identify group-level effects. Since each participant in our pilot study participated in 90 trials, we index the trial number for each participant. The trials are also divided into blocks of three, which we index separately. Finally, we compute the payout for each trial.
+
+```{r}
+# The "solutions" to participant trials
+df_soln <- read.csv("../data/pilot-data/solutions-pilots-1_2.csv") %>% 
+  group_by(trial) %>%
+  summarise(
+    positives = sum(profitable == TRUE),
+    negatives = sum(profitable == FALSE),
+    is_profit = list(profitable)
+  )
+
+# Read data
+df_db <- rbind(
+  mutate(read.csv("../data/pilot-data/pilot_1_db.csv"), pilot = 1),
+  mutate(read.csv("../data/pilot-data/pilot_2_db.csv"), pilot = 2)
+)
+
+# Select participants
+df <- participants %>%
+  select(prolific_pid) %>%
+  inner_join(df_db, by="prolific_pid") %>%
+  inner_join(df_soln, by = "trial") %>%
+  arrange(id) %>%
+  group_by(prolific_pid) %>%
+  mutate(p_trial_id = row_number()) %>% # trial number 1...90
+  group_by(prolific_pid, incentive) %>%
+  mutate(
+    alpha = (incentive/100),
+    block_id = row_number(), # trial number within a bloc 1...30
+    block = floor((p_trial_id-1) / 30) + 1,
+    trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay)),
+    fp = -1 * fp, # make it the number of false positives (count >= 0)
+    fn = -1 * fn
+  ) %>%
+  ungroup() %>%
+  select( -c(session_id, duration, incentive, trial_pay) )
+```
+
+
+```{r}
+df %>%
+  group_by(pilot, alpha, condition) %>%
+  summarise(n = n())
+```
+
+
+### Evaluating problems in data collection
+
+We check to see if there are any problems in data collection. Below, we check if the cumulative column is being calculated accurately, by comparing it to the calculation using the actual number of true positive, true negatives, false positives and false negatives that we record directly in the database. We find, in the first pilot, 3 instances where this is violated.
+
+```{r}
+df %>% 
+  arrange(id) %>%
+  group_by(prolific_pid) %>%
+  mutate(
+    calculated_trial_payout = (tp + tn - fn)*20 - fp*20*round((1 - alpha)/alpha),
+    diffed_trial_payout = c(head(cumulative_pay, 1), diff(cumulative_pay))
+  ) %>%
+  filter(diffed_trial_payout != calculated_trial_payout & pilot != 2) #ignore pilot 2 because it has the weird alpha = 0.3
+```
+
+## Preliminary data exploration
+
+Tally the false positives by alpha levels
+
+```{r}
+df %>%
+  group_by(alpha, fp) %>%
+  ggplot(aes(fp)) +
+  geom_bar() + 
+  facet_grid(. ~ alpha) +
+  labs(x = "# of false positives")
+```
+
+
+# Exploratory models
+
+## Pilot 1
+
+Visualize the results --- the F1 / MCC models do not make sense here.
+
+#### Multiple comparisons correction
+
+## Pilot 3
+
+### Model 1: Multinomial model for classifying responses
+
+Before we are able to implement this model, we need to load the data for pilot 3, perform the same wrangling operations that we had performed for the other two pilots.
+
+```{r, warning = FALSE}
+participants.3 <- df3_prolific %>%
+  filter(status %in% completed_codes & participant_id != "5d76ac914c93440001c03fd7") %>%
+  rename(prolific_pid = participant_id)
+
+# The "solutions" to participant trials
+df_soln.3 <- read.csv("../data/pilot-data/solutions-pilot-3.csv") %>% 
+  group_by(trial, nregions) %>%
+  summarise(
+    positives = sum(profitable == TRUE),
+    negatives = sum(profitable == FALSE),
+    is_profit = list(profitable)
+  )
+
+# Read data
+df_db.3 <- read.csv("../data/pilot-data/pilot_3_db.csv") %>%
+  mutate(nregions = (tp + tn - fp - fn))
+
+# Select participants
+df.3 <- participants.3 %>%
+  select(prolific_pid) %>%
+  inner_join(df_db.3, by="prolific_pid") %>%
+  inner_join(df_soln.3, by = c("trial", "nregions")) %>%
+  arrange(id) %>%
+  group_by(prolific_pid) %>%
+  mutate(
+    trial_id = row_number(),  # trial number 1...60
+    ntrials = nregions,
+    nregions = as.factor(nregions)
+  ) %>%
+  group_by(prolific_pid, nregions) %>%
+  mutate(
+    alpha = (incentive/100),
+    block = floor((trial_id - 1) / 30) + 1,
+    fp = -1 * fp,
+    fn = -1 * fn
+  ) %>%
+  ungroup() %>%
+  select(-c(session_id, responses, cumulative_pay, positives:is_profit))
+
+head(df.3)
+
+df.3 %>% write.csv("../data/pilot_study_cleaned.csv", row.names = FALSE)
+```
+
+We then define the model and create the appropriate column in the data structure for predicting multinomial outcome variables (`brms` requires the outcome variable to be a n $\times$ k matrix where k is the number of categories, and n is the number of responses; here # of trials $\times$ # of participants).
+
+```{r}
+df <- df.3 %>%
+  # filter((prolific_pid != "5c6c403c3dbfc80001abf9f4") & !(session_id %in% c("5eb99d9a309df40bf582e7f3", "5ebb422be7d9a811a6b845c0", "5ebdb036e779750e69dc04e5"))) %>%
+  group_by(prolific_pid) %>%
+  mutate(
+    condition = as.character(condition),
+    condition = replace(condition, condition == "raw-data", "raw_data"),
+    condition = replace(condition, condition == "hops-1", "hops_mean"),
+    condition = replace(condition, condition == "hops-2", "hops_bootstrap"),
+    # due to flags, some of the recorded IDs are > 70
+    # adjust and scale the trial_id from (1, 70) -> (-1, 1)
+    adj_trial_id = (1:60)/30 - 1
+  ) %>% ungroup()
+
+df$y <- with(df, cbind(tp, tn, fn, fp))
+
+prior_multinom = c(
+  prior(normal(0, 1), class = Intercept, dpar = "mufn"),
+  prior(normal(0, 1), class = Intercept, dpar = "mutn"),
+  prior(normal(0, 1), class = Intercept, dpar = "mufp"),
+  prior(normal(0, 0.5), class = b, dpar = "mufn"),
+  prior(normal(0, 0.5), class = b, dpar = "mutn"),
+  prior(normal(0, 0.5), class = b, dpar = "mufp"),
+  prior(lkj(2), class = cor),
+  prior(normal(0, 0.5), class = sd, dpar = "mufn"),
+  prior(normal(0, 0.5), class = sd, dpar = "mufp"),
+  prior(normal(0, 0.5), class = sd, dpar = "mutn")
+)
+
+#fit.3.2 <- brm(y | trials(ntrials) ~ condition * trial_id * nregions + (trial_id * nregions | prolific_pid), data = df, family = multinomial(), prior = prior_multinom, cores = 2, chains = 2, iter = 2500)
+
+# fit.3.1 <- readRDS("../models/fit-multinomial-1.rds")
+
+fit.3.2 <- readRDS("../model-fits/fit-multinomial-pilot.rds")
+```
+
+### Results
+
+Below we plot the results from the model. The model predicts the probability of TP, TN, FP and FN in each condition (visualization type). 
+
+```{r, fig.width = 12, fig.height = 5}
+draws.fit.3 <- data_grid(df, condition, ntrials, adj_trial_id) %>%
+  mutate(nregions = ntrials) %>%
+  add_fitted_draws(fit.3.2, re_formula = NA, n = 100)
+
+draws.fit.3 %>%
+#  filter(condition == "ci") %>%
+  mutate(
+    .value = .value/ntrials,
+    trial_id = (adj_trial_id + 1)*30 
+  ) %>%
+  ggplot(aes(x = trial_id, y = .value)) +
+  stat_lineribbon(.width = c(.95, .8, .5)) +
+  scale_fill_brewer() +
+  facet_grid(.category ~ interaction(ntrials, condition), scales = "free_y")
+```
+
+### Calculating F(0.05) scores
+
+Since we provide a strong disincentive for participants against False Positives, we want to calculate a score which captures that information. F-scores are a commonly used metric for this purpose. Our statistical model allows us to predict, for each trial and in each condition, the average F-scores.
+
+```{r, fig.width = 12, fig.height = 4}
+draws.fit.3 %>%
+  group_by(condition, trial_id, nregions, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate(
+    beta = 0.05,
+    fscore = ((1 + beta^2)*tp)/(tp*(1+beta^2) + fn*(beta^2) + fp)
+  ) %>%
+  ggplot(aes(x = trial_id, y = fscore)) +
+  stat_lineribbon(.width = c(.95, .8, .5)) +
+  scale_fill_brewer() +
+  facet_grid(nregions ~ condition)
+```
+
+## Power analysis
+
+```{r}
+draws.fit.3 %>%
+  mutate(.value = .value/ntrials) %>%
+  group_by(condition, ntrials, .category, .draw) %>%
+  summarise(.value = mean(.value)) %>%
+  summarise(
+    mean = mean(.value),
+    sd = sd(.value)
+  )
+```
+
+```{r fig.width = 12, fig.height = 4}
+draws.fit.3 %>% 
+  ungroup() %>%
+  mutate(.value = .value/ntrials) %>%
+  mutate(condition = relevel(condition, "raw-data")) %>%
+  group_by(condition, ntrials, .category, .draw) %>%
+  summarise(.value = mean(.value)) %>%
+  compare_levels(.value, by = condition, comparison = control) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, color = "red", alpha = 0.7) +
+  geom_halfeyeh(aes(x = .value, y = condition), .width = c(.95, .8, .5)) +
+  scale_fill_brewer() +
+  facet_grid(ntrials ~ .category, scales = "free_x")
+```
+
+
+```{r fig.width = 12, fig.height = 4}
+# draws.fit.3 %>%
+  mutate(.value = .value/ntrials) %>%
+  group_by(condition, ntrials, .category, .draw) %>%
+  summarise(.value = mean(.value)) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = .value, y = condition), .width = c(.95, .8, .5)) +
+  scale_fill_brewer() +
+  facet_grid(ntrials ~ .category, scales = "free_x")
+```
+

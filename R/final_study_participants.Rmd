@@ -1,0 +1,249 @@
+---
+title: "Final study"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(magrittr)
+library(rstan)
+library(brms)
+library(tidybayes)
+library(modelr)
+library(lubridate)
+library(cowplot)
+library(bayesplot)
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+theme_set(theme_tidybayes() + panel_border())
+```
+
+
+# Summary
+
+| Between/within             | 12 regions | 8 regions |
+|----------------------------|------------|-----------|
+| HOPS 1                     | 17.5       | 17.5      |
+| HOPS 2                     | 17.5       | 17.5      |
+| CI                         | 17.5       | 17.5      |
+| qdotplots                  | 17.5       | 17.5      |
+| Pdf density                | 17.5       | 17.5      |
+| raw-data                   | 17.5       | 17.5      |
+|                            |            |           |
+| # of participants per cell | 15         | 60        |
+| Hourly wage                | 9          | 9         |
+| Total cost                 | 472.5      | 1890      |
+
+
+# Read data
+
+## List of prolific_pid's
+
+```{r}
+prolific_fnames <- list.files(".", pattern = "final_prolific_(.+).csv")
+  
+df_prolific <- 
+  map_df(
+    prolific_fnames,
+    ~ read_csv(.x, col_types = cols(time_taken = col_character())) %>%
+      mutate(vis = gsub("final_prolific_(.*).csv", "\\1", .x))
+  )
+```
+
+
+```{r}
+df_prolific <- df_prolific %>%
+  mutate(prolific_pid = participant_id ) %>%
+  filter(status == "AWAITING REVIEW" | status == "APPROVED")
+```
+
+
+## Responses recorded in the database
+
+From last pilot 
+
+  > max(df_db$id)
+  [1] 10267
+
+
+```{r}
+df_db <- read_csv("final_db_allconds.csv", col_types = cols(flags = col_character()))
+```
+
+```{r}
+df <- df_db %>%
+  right_join(df_prolific %>% 
+      select(prolific_pid, vis), by = "prolific_pid")  %>%
+  mutate(prolific_pid = factor(prolific_pid)) %>%
+  arrange(id) %>%
+  mutate(fp = -1 * fp) %>% # make it the number of false positives (count >= 0)
+  mutate(fn = -1 * fn) %>%
+  mutate(nregions = fp + fn + tp + tn) %>%
+  group_by(prolific_pid) %>%
+  mutate(p_trial_id = row_number()) %>% # trial number 1...70?
+  mutate(trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay))) %>%
+  group_by(prolific_pid, nregions) %>%
+  mutate(block_id = row_number()) %>% # trial number within a bloc 1...35
+  ungroup()  %>%
+  select(-c(session_id, condition, duration)) %>%
+  filter(prolific_pid != "5d76ac914c93440001c03fd7") %>% # 41/60 completed
+  filter(prolific_pid != "5a25b9afb51f2c0001e5da04") # manual approval (compensated for bug)
+  
+```
+
+```{r}
+summary(df)
+```
+
+# Response validation
+
+```{r}
+df_1vis <- df %>%
+  filter(vis == "halfeye")
+  # filter(vis == "hops-2")
+  # filter(vis == "raw-data")
+  # filter(vis == "hops-1")
+  # filter(vis == "raw-data")
+  # filter(vis == "dotplot")
+```
+
+
+## Print approval prolific_id
+
+```{r}
+df_1vis %>%
+  group_by(prolific_pid) %>%
+  tally() %>%
+  arrange(desc(n)) %>%
+  # filter(n > 70) %>% 
+  select(prolific_pid) %>% 
+  split(.$prolific_pid) %>%
+  walk(~ cat(format_delim(., "\n", col_names = FALSE)))
+```
+
+## Inspection
+
+```{r}
+# in case someone didn't complete all the trials
+df_mask <- crossing(
+  trial = 1:35,
+  nregions = c(8,12)
+)
+```
+
+
+```{r}
+df_1vis %>%
+  mutate(prolific_pid = as.character(prolific_pid)) %>%
+  group_by(prolific_pid, trial, nregions) %>%
+  tally() %>%
+  split(.$prolific_pid)  %>%
+  map_df(
+    ~ right_join(.,
+                 crossing(trial = 1:35,
+                          nregions = c(8,12),
+                          prolific_pid = first(.$prolific_pid)),
+                 by = c("trial", "nregions", "prolific_pid")) %>%
+      mutate(n = replace_na(n, 0))
+    ) %>%
+  filter(n != 1) %>%
+  split(.$prolific_pid) %>%
+  map( ~arrange(., nregions, trial))
+
+
+```
+
+
+# Data cleaning
+
+
+Use `df_clean` for analysis
+
+
+## Remove extra trials
+
+
+Remove trials participants repeated (necessary)
+
+```{r}
+df_norepeat <- df %>%
+  group_by(prolific_pid, vis, nregions, trial) %>%
+  slice(n()) %>% # only keep the last trial, so repeats are removed %>%
+  ungroup() %>%
+  arrange(id)
+
+```
+
+Balance the number of trials between nregions == 8 and 12
+
+(Alternatively, leave as is without balancing)
+
+```{r}
+nregion_balance <- df_norepeat %>%
+  group_by(prolific_pid, vis) %>%
+  summarize(n8 = sum(nregions == 8), n12 = sum(nregions == 12)) %>%
+  mutate(to_keep = min(n8, n12)) %>%
+  select(-c(n8, n12))
+
+df_clean <- df_norepeat %>%
+  left_join(nregion_balance, by = c("prolific_pid", "vis")) %>%
+  group_by(prolific_pid, vis, nregions) %>%
+  slice(1:first(to_keep)) %>% # keep the first n to balance
+  ungroup() %>%
+  select(-to_keep) %>%
+  arrange(id)
+```
+
+
+
+## (Bonus calculation)
+
+  df %>%
+    filter(vis == "dotplot") %>%
+    group_by(vis, prolific_pid) %>%
+    summarise(end_pay = last(cumulative_pay)) %T>% print() %>%
+    filter(end_pay >0 ) %>%
+    group_by(vis) %>%
+    mutate(bonus = (end_pay)/(max(end_pay)) * 1.5) %>%
+    mutate(bonus = format(bonus, digits = 2)) %>%
+    ungroup() %>%
+    mutate(prolific_pid = fct_drop(prolific_pid)) %>%
+    select(-c(vis, end_pay)) %>%
+    split(f = .$prolific_pid) %>%
+    walk( ~ cat(format_delim(., ",", col_names = FALSE)))
+
+```{r}
+df_clean %>%
+  group_by(prolific_pid, vis) %>%
+  summarize(end_pay = sum(trial_pay)) %>%
+  filter(end_pay > 0) %>%
+  group_by(vis) %>%
+  mutate(bonus = end_pay / max(end_pay)) %>%
+  mutate(bonus = format(bonus, digits = 1)) %>%
+
+  # filter(vis=="halfeye") %>%
+  # filter(vis == "hops-2") %>%
+  # filter(vis == "raw-data") %>%
+  # filter(vis == "hops-1") %>%
+  # filter(vis == "dotplot") %>%
+  filter(vis == "ci") %>%
+  
+  
+  ungroup() %>%
+  mutate(prolific_pid = fct_drop(prolific_pid)) %>%
+  select(-c(vis, end_pay)) %>%
+  split(f = .$prolific_pid) %>%
+  walk( ~ cat(format_delim(., ",", col_names = FALSE)))
+  
+```
+
+Bonuses paid: 
+16.66
+6.87
+6.32
+7.48
+13.02 
+17.50
+---

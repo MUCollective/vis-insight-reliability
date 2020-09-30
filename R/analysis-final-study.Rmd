@@ -1,0 +1,874 @@
+---
+title: "Analysis for `Odds and Insights: Do Uncertainty Visualisations Improve Qualityof Decisions in Visual Analysis` "
+date: '`r Sys.time()`'
+author: "Abhraneel Sarma"
+output:  
+  pdf_document:
+    keep_tex: yes
+#  html_document:
+#    toc: yes
+#    toc_depth: 3
+#    toc_float: true
+#    theme: spacelab
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+library(tidyverse)
+library(rstan)
+library(brms)
+library(modelr)
+library(tidybayes)
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+
+## Overview
+
+- Recruiting platform: Prolific
+  - study code 29ABE0A0
+  - base pay: $7
+  - estimated time: 40 min
+- Study website: https://mucollective.github.io/vis-insights-study/
+- Database at AWS
+- Exit survey at Qualtrics
+
+
+## Exploratory models
+
+```{r load-data}
+# Load the data
+df <- read.csv("../data/final-study-cleaned.csv")
+df.bh <- read.csv("../data/final-study-bh.csv")
+```
+
+
+### Number of false positives in each between and within subjects condition
+
+Tally the false positives by each condition. The graphs below show the distribution of the number of false positives in a single trial. We can see that most people are making 2 or fewer false positives in each trial, however we do not see much differences based on the number of regions shown to participants. 
+
+```{r 01-num-fp, fig.height = 3, fig.width = 9}
+df %>%
+  group_by(condition, fp) %>%
+  ggplot(aes(fp)) +
+  geom_bar() + 
+  facet_grid(nregions ~ condition) +
+  labs(x = "# of false positives") + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+```
+
+
+### Correctness of responses in each between and within subject condition
+
+```{r summary-stats-table}
+df %>%
+  mutate(nregions = as.numeric(as.character(nregions))) %>%
+  group_by(condition, nregions) %>%
+  summarise(
+    tp = mean(tp) / mean(nregions),
+    tn = mean(tn) / mean(nregions),
+    fp = mean(fp) / mean(nregions),
+    fn = mean(fn) / mean(nregions),
+    .groups = "drop"
+  ) %>%
+  mutate(fdr = fp / (tp + fp))
+```
+### Probability of TP/TN/FP/FN in each condition
+
+In the following graph we show the mean values of TP, TN, FP and FN in each uncertainty visualization condition, and separated by the number of graphs that we show each participant.
+
+```{r 02-mean-stats, fig.height = 5, fig.width = 8}
+df.bh.mean <- df.bh %>%
+  group_by(nregions) %>%
+  summarise(tp = sum(tp), tn = sum(tn), fp = sum(fp), fn = sum(fn), positives = sum(is_profit), .groups = "drop") %>%
+  pivot_longer(c(tp:fn), names_to = ".category", values_to = ".value") %>%
+  rename( ntrials = nregions ) %>%
+  mutate( 
+    .category = toupper(.category),
+    .value = .value / (ntrials * 35) 
+  )
+
+data.ann <- tibble(
+  .category = toupper(c("fn", "fp", "tn", "tp")), 
+  lab = rep(c("\u2190 smaller is better", "larger is better \u2192"), each = 2),
+  x = c(0.275, 0.05, 0.45, 0.225),
+  ntrials = 12
+)
+
+data.ann$x = 0.225
+
+actual.statistics <- df %>%
+  mutate(ntrials = as.numeric(as.character(nregions))) %>%
+  group_by(condition, ntrials) %>%
+  summarise(
+    tp = mean(tp) / mean(ntrials),
+    tn = mean(tn) / mean(ntrials),
+    fp = mean(fp) / mean(ntrials),
+    fn = mean(fn) / mean(ntrials),
+    .groups = "drop"
+  ) %>%
+  mutate(fdr = fp / (tp + fp)) %>%
+  pivot_longer(cols = c(tp:fdr), names_to = ".category", values_to = "pct") %>%
+  mutate(
+    .category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR"))
+  )
+
+actual.statistics %>%
+  ggplot() +
+  geom_col(aes(x = pct, y = condition)) + 
+  geom_vline(data = df.bh.mean, aes(xintercept = .value), linetype = "dotted", color = "blue", size = 1) +
+  geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "red") +
+  facet_grid(ntrials ~ .category) +
+  labs(x = "percent of each type of correctness / errors", y = "type of correctness / error") +
+  geom_text(data = data.ann, aes(label = lab, x = x), size = 5, y = 0, vjust = 0, color = "#AB2C09")+
+  coord_cartesian(xlim = c(0, 0.5), expand = T, clip = "off") + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.text.x = element_text(vjust = -4),
+    axis.title.x = element_text(vjust = -4),
+    plot.margin = unit(c(1, 1, 4, 1), "lines")
+  )
+```
+
+## Modeling
+
+The research questions in our study are:
+
+- RQ1: do users implicitly perform some form of multiple comparisons correction?
+- RQ2: do different types of uncertainty representations help users perform multiple comparisons correction by reducing the false discovery rate (FP / (FP + TP)).
+
+The goal of our modeling is to estimate the probability of a TP / TN / FP / FN for a given (or average trial) along with some uncertainty. Based on the results from our model, we attempt to answer our research questions.
+
+#### Multiple comparisons correction
+
+We define the model and create the appropriate column in the data structure (`y`) for predicting multinomial outcome variables (`brms` requires the outcome variable to be a n $\times$ k matrix where k is the number of categories, and n is the number of responses; here # of trials $\times$ # of participants).
+
+## Model fit
+
+```{r model-fit}
+prior_multinom = c(
+  prior(normal(0, 1.5), class = Intercept, dpar = "mufn"),
+  prior(normal(0, 1.5), class = Intercept, dpar = "mutn"),
+  prior(normal(0, 1.5), class = Intercept, dpar = "mufp"),
+  prior(normal(0, 0.5), class = b, dpar = "mufn"),
+  prior(normal(0, 0.5), class = b, dpar = "mutn"),
+  prior(normal(0, 0.5), class = b, dpar = "mufp"),
+  prior(lkj(4), class = cor),
+  prior(normal(0, 0.5), class = sd, dpar = "mufn"),
+  prior(normal(0, 0.5), class = sd, dpar = "mufp"),
+  prior(normal(0, 0.5), class = sd, dpar = "mutn")
+)
+
+# df$y <- df %>% with(cbind(tp, tn, fn, fp)) 
+
+# fit <- brm(bf(y | trials(ntrials) ~ condition * trial_id * nregions + (trial_id * nregions | prolific_pid)), data = df, family = multinomial(), prior = prior_multinom, cores = 2, chains = 2, inits = init_fn, iter = 7500, warmup = 2500)
+
+# this file is too large for Github
+# download from here: https://drive.google.com/file/d/1tisQrmD6pfGcsdMeOdLNk347fZDNJCDQ/view?usp=sharing
+fit <- readRDS("../model-fits/fit-thinned.rds")
+
+summary(fit)
+```
+
+
+### Model diagnostics
+
+Before we show the results from the model, we first run some posterior predictive checks to make sure that the model is able to recover the 
+
+```{r predicted-draws-pp-check, eval = FALSE, fig.width = 6, fig.height = 3}
+# predicted.fit <- data_grid(df, nesting(condition, prolific_pid, ntrials, nregions, adj_trial_id)) %>%
+#  add_predicted_draws(fit, re_formula = ~ (adj_trial_id * nregions | prolific_pid), n = 1000)
+
+# this file is too large for Github
+# download from here: https://drive.google.com/file/d/1XraSS5I0VzsRzRgA0Ajc18nBax8eLBhv/view?usp=sharing
+predicted.fit <- readRDS("../model-fits/predicted-draws.rds")
+
+test.statistics <- predicted.fit %>% 
+  ungroup() %>%
+  mutate(
+    .category = toupper(as.character(.category)),
+    .prediction = .prediction / ntrials,
+    condition = factor(condition, levels = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean")),
+    trial_id = round((adj_trial_id + 1)*35)
+  ) %>%
+  group_by(.draw, condition, .category, ntrials) %>%
+  summarise( .prediction = mean(.prediction) )
+
+test.statistics %>%
+  filter(ntrials == 12) %>%
+  ggplot(aes(.prediction)) +
+  geom_histogram() +
+  geom_vline(data = filter(actual.statistics, .category != "FDR" & ntrials == 12), aes(xintercept = pct), color = "red") +
+  facet_grid(condition ~ .category, scales = "free_x")
+```
+
+
+```{r predicted-draws-pp-check-2, eval = FALSE, fig.width = 6, fig.height = 3}
+test.statistics %>%
+  filter(ntrials == 8) %>%
+  ggplot(aes(.prediction)) +
+  geom_histogram() +
+  geom_vline(data = filter(actual.statistics, .category != "FDR" & ntrials == 8), aes(xintercept = pct), color = "red") +
+  facet_grid(condition ~ .category, scales = "free_x")
+```
+
+As the posterior predictive checks from the model, for all our primary population-level parameters, look good, we will examine the results closely. Before we try to visualise the model predictions, we need to extract posterior samples from the fitted model object:
+
+```{r extract-draws, fig.width = 6, fig.height = 4}
+draws.fit <- data_grid(df, condition, nesting(ntrials, nregions), adj_trial_id) %>%
+  add_fitted_draws(fit, re_formula = NA) %>% 
+  ungroup() %>%
+  mutate(
+    .category = toupper(as.character(.category)),
+    .value = .value / ntrials,
+    condition = factor(condition, levels = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean")),
+    trial_id = round((adj_trial_id + 1)*35)
+  )
+```
+
+### RQ 1: do users implicitly perform some form of multiple comparisons correction?
+
+If users are not performing any form of multiple comparisons correction, then intuitively, on average, a participant in our study will have more number of False positives when presented with 12 graphs as opposed to 8 graphs (the two within person conditions). More directly, we can compare the False Discovery rate when $nregions = 8$ vs when $nregions = 12$. If the FDR is constant or less for $nregions = 12$ compared to $nregions = 8$, then it implies that participants are performing some form of multiple comparisons correction.
+
+First, we need to calculate the False Positive rate without any multiple comparisons correction:
+
+```{r}
+data.sample <- rbind(
+  mutate(readRDS("../data/simulated_data_12regions.rds"), nregions = 12), 
+  mutate(readRDS("../data/simulated_data_8regions.rds"), nregions = 8)
+)
+
+data.fp_rate <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) ) %>%
+  mutate(
+    p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
+    is_profit = ifelse(mu > 0, TRUE, FALSE),
+    selected = ifelse(p_value < 0.05, TRUE, FALSE),
+    uncorrected_fp = ifelse(p_value < 0.05 & !is_profit, TRUE, FALSE)
+  ) %>%
+  rename(ntrials = nregions) %>%
+  group_by(ntrials) %>%
+  summarise(uncorrected_fp = mean(uncorrected_fp) / mean(selected), .groups = "drop")
+```
+
+In the figure below, we see that, on average, the FDR decreases for participants when presented with more graphs. This suggests that they are likely performing some form of implicit multiple comparisons correction. The FDR for $ngraphs = 8$ is 14.5 and for $ngraphs = 12$ is 0.1.
+
+```{r 03-fdr-nregions, fig.width = 8, fig.height = 2}
+p1.fdr <- draws.fit %>%
+  group_by(ntrials, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  ggplot(aes(x = fp_rate, y = factor(ntrials))) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_text(data = data.fp_rate, aes(x = uncorrected_fp, y = factor(ntrials)), label = "|", size = 8) +
+  geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  scale_x_continuous(limits = c(0, 0.2), breaks = seq(-0.2, 0.2, by = 0.04)) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+p2.fdr <- draws.fit %>%
+  group_by(ntrials, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  compare_levels(variable = fp_rate, by = ntrials) %>%
+  ggplot(aes(x = fp_rate, y = factor(ntrials))) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  scale_x_continuous(limits = c(-0.1, 0), breaks = seq(-0.1, 0, by = 0.02)) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.title.y = element_blank()
+  )
+
+cowplot::plot_grid(p1.fdr, p2.fdr, rel_widths = c(6.5, 3.5))
+```
+
+We see that the decrease in the False Discovery Rate is, on average, a magnitude of 4 percentage points, with a 95% credible interval of [0.033, 0.051]. This implies there is almost a 30% reduction in the FDR.
+
+Next, since we have different visualization conditions, we inspect if this difference is persistent across all the conditions. From the following figure below, we see that the FDR decreases for participants consistently across all the uncertainty representations, suggesting that it is likely not an artifact of certain forms of visual representations. The magnitude of this decrease appears to be consistent across the different uncertainty representations as well.
+
+```{r 04-fdr-nregions-by-vis, fig.width = 8, fig.height = 4}
+draws.fit %>%
+  group_by(ntrials, .draw, .category, condition) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  ggplot(aes(x = fp_rate, y = factor(ntrials))) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_text(data = data.fp_rate, aes(x = uncorrected_fp, y = factor(ntrials), color = factor(ntrials)), label = "|", size = 8) +
+  geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  facet_wrap( ~ condition ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+```
+Thus, our results suggest that users in our experimental set up implicitly perform some form of multiple comparisons correction. Because our experimental design incentivised participants against making False Discoveries proportionate to performing a NHST at a 95% confidence intervals, we cannot tell if participants would always behave this way. We believe that in the absence of incentives, participants may not control for False Positives in a similar manner, as suggested by the results of the study by Zgraggen et al.
+
+### RQ 2: do users implicitly perform some form of multiple comparisons correction?
+
+To answer this question, we first look at the FDR across the different uncertainty representations, marginalised over the number of regions shown to participants. This gives us the aggregate effect over the two within-subjects conditions in the study.
+
+```{r 05-fdr-vis, fig.width = 8, fig.height = 3}
+p1 <- draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  ggplot(aes(x = fp_rate, y = condition)) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+p2 <- draws.fit %>% 
+  group_by(condition, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  compare_levels(variable = fp_rate, by = condition, comparison = control) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = fp_rate, y = condition), .width = c(.95, .8, .5)) +
+  geom_vline(aes(xintercept = 0), color = "black", alpha = 0.5) +
+  geom_point(data = data.frame(condition = "raw_data", fp_rate = 0), aes(x = fp_rate, y = condition), size = 3) +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.title.y = element_blank()
+  )
+
+plot <- cowplot::plot_grid(p1, p2, rel_widths = c(4, 5))
+
+pdf(file = "../figures/figures-paper/05-fdr-vis-1.pdf", useDingbats = FALSE, width = 12, height = 6)
+plot
+dev.off()
+```
+From the figure above, we can see that, on average, using uncertainty representatoions such as `Hypothetical Outcome Plot of the mean difference` and `Probability Density Function of the difference` reliably decreases the FDR, with an observed decrease of 0.04 and 0.03 percentage points respectively (95% CI: [-0.072, 0.005] and [0.065, 0.02] respectively).  Some other commonly used uncertainty representations, such as Confidence Intervals appear to have a small, but unreliable effect towards decreasing (~ 1.5 percentage points, 95% CI: [-0.05, 0.02]) FDR. On the other hand, other certain other uncertainty representations such as `dotplots of the mean difference` and Hypothetical outcome plot of bootstrapped data samples` appear to have no improvement or even slightly worsen the FDR. (the exact estimates are present in the table below)
+
+```{r}
+draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  compare_levels(variable = fp_rate, by = condition, comparison = control) %>%
+  median_qi()
+```
+
+*Are these differences consistent across the number of regions shown?*
+
+Based on the plots below, we find that the differences are fairly consistent across the within-subjects manipulation.
+
+```{r 06-fdr-diff-vis-by-nregions, fig.width = 8, fig.height = 3}
+draws.fit %>%
+  group_by(condition, ntrials, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  group_by(ntrials) %>%
+  compare_levels(variable = fp_rate, by = condition, comparison = control) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = fp_rate, y = condition), .width = c(.95, .8, .5)) +
+  geom_vline(aes(xintercept = 0), color = "black", alpha = 0.5) +
+  geom_point(data = data.frame(condition = "raw_data", fp_rate = 0), aes(x = fp_rate, y = condition), size = 3) +
+  facet_wrap( ~ ntrials) +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    panel.spacing = unit(6, "lines")
+  )
+```
+
+### Exploratory analysis
+
+We first take a look at the probability of TP/TN/FP/FN in each uncertainty representation condition, marginalised over $nregions$. Interestingly, we find that there isn't a lot of difference in the probability of an average user making a FP on an average trial, including some of the uncertainty representations with better FDR; except for the dotplot condition, all the other uncertainty representations appear comparable to the baseline (`raw data`) in terms of probability of False Positives in an average trial. The improvement in FDR usually arises from the analysts being able to correctly identify True Positives more accurately where we see large differences.The probability of False Negative also varies substantially across the different conditions, with `HOPS bootstrap` performing worse and all the other uncertainty representations performing better than the baseline condition (with dotplot performing the best).There is also variation in the probability of making a False Negative across the conditions, but little or no difference between the probability of making a True Negative.
+
+Because it is difficult to compare the rates of TP / TN / FP / FN across conditions, we will use metrics developed in ML such as F-scores and Matthews Correlation Coefficient to obtain a composite score. Another way of comparing the different conditions would be to use the payout which serves as the incentive for the different participants.
+
+
+```{r 07-probs-vis, fig.width = 8, fig.height = 4}
+data.ann$x <- c(0.275, 0.05, 0.475, 0.25)
+
+draws.fit %>%
+  group_by(.draw, .category, condition) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  ggplot(aes(x = .value, y = condition)) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(data = summarise(group_by(df.bh.mean, .category), .value = mean(.value), .groups = "drop"), aes(xintercept = .value), color = "red", alpha = 0.5) +
+  geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "blue", alpha = 0.5) +
+  facet_grid(. ~ toupper(.category), scales = "free_x") +
+  labs(x = "Probability of each type of correctness / errors", y = "Uncertainty Represenation") +
+  geom_text(data = data.ann, aes(label = lab, x = x), size = 5, y = 0, vjust = 1, color = "#AB2C09") +
+  coord_cartesian(expand = T, clip = "off") + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    axis.text.x = element_text(vjust = 0),
+    axis.title.x = element_text(vjust = -8),
+    plot.margin = unit(c(1, 1, 4, 1), "lines")
+  )
+```
+
+#### Learning effects?
+
+Before we compare the composite scores, we look at the potential learning effects in our primary research questions. In repeated measures experimental designs such as this, where we also provide participants feedback (in the first 5 trials in each block), we might expect to see some learning effect (or at least variation in the responses over the course of the trials). In the figure below, we plot the change in the probability of TP/TN/FP/FN in each condition.
+
+```{r, 08-probs-vis-learning}
+draws.fit %>%
+  group_by(condition, ntrials, .draw, trial_id, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  ggplot() +
+  stat_lineribbon(aes(x = trial_id, y = .value), alpha = 0.05) +
+  scale_fill_brewer() + 
+  theme_minimal() +
+  ylim(c(0, 0.65)) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14)
+  )
+```
+
+```{r, 08-probs-vis-learning, fig.height = 4, fig.width = 10}
+draws.ci <- draws.fit %>%
+  filter(ntrials == 8 & .category == "FN" & condition == "dotplot") %>%
+  group_by(condition, ntrials, .draw, trial_id, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") #%>%
+
+
+p1.ci <- draws.ci %>%
+  ggplot() +
+  stat_lineribbon(aes(x = trial_id, y = .value)) +
+  # geom_point(data = sample_n(draws.ci, 1e3), aes(x = trial_id, y = .value), alpha = 0.1) +
+  scale_fill_brewer() + 
+  theme_minimal() +
+  ylim(c(0, 0.32)) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 14),
+    legend.position = "none"
+  )
+
+draws.ci.sample <- sample_n(draws.ci, 1000)
+
+p2.ci <- draws.ci.sample %>%
+  ggplot() +
+  geom_point(aes(x = trial_id, y = .value), alpha = 0.4, color = "#5B75BD") + #"#6ECCB0"
+  theme_minimal() +
+  ylim(c(0, 0.32)) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 14)
+  )
+
+p3.ci <- draws.ci.sample %>%
+  ggplot() +
+  geom_dotplot(aes(x = .value), binwidth = 0.0025, stackratio = 1.4, fill = "#3182bd", color = NA) + #"#7BE3C4"
+  xlim(c(0, 0.32)) +
+  theme_minimal() +
+  coord_flip() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14)
+  )
+
+p4.ci <- draws.ci.sample %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = .value, y = NA)) +
+  xlim(c(0, 0.32)) +
+  theme_minimal() +
+  coord_flip() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14)
+  )
+
+
+plot <- cowplot::plot_grid(p1.ci, p2.ci, p3.ci, p4.ci, nrow = 1)
+```
+
+
+
+
+```{r fig,heihgt = 16, fig.width = 16}
+pdf(file = "analysis-final-study_files/figure-latex/marginalised-dist.pdf", useDingbats = FALSE, width = 24, height = 12)
+plot
+dev.off()
+```
+
+
+
+
+This indicates that there might be an effect of learning that which might affect our interpretation of the results. Specifically, if the effect of learning is more significant than any of the effects of the different conditions that we manipulate, we might not expect to see any differences in the results when we compare the final trial. Another common practice is to compare the results of the final 5-10 trials (we take 5 here). We choose these points specifically because the within-subjects manipulation is performed in two blocks of 35 trials each giving us reasonable end points. 
+
+From the figure below, we see that the our participants still perform some form of implicit multiple comparisons correction, and this persists even after accounting for the potential effect of learning.
+
+```{r 09-fdr-diff-nregions-nth-trial, fig.width = 8, fig.height = 3}
+p1 <- draws.fit %>%
+  filter(trial_id %in% c(35, 70) ) %>%
+  group_by(ntrials, trial_id, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  group_by(trial_id) %>%
+  compare_levels(variable = fp_rate, by = ntrials) %>%
+  ggplot(aes(x = fp_rate, y = factor(ntrials))) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  scale_x_continuous(limits = c(-0.1, 0.02), breaks = seq(-0.1, 0.1, by = 0.01)) +
+  facet_grid(trial_id ~ . ) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    panel.spacing = unit(4, "lines")
+  )
+
+p2 <- draws.fit %>%
+  filter(trial_id %in% c(31:35, 66:70) ) %>%
+  mutate( trial_group = ifelse(trial_id <= 35, "Trials 31 - 35", "Trials 66 - 70") ) %>%
+  group_by(ntrials, trial_group, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  group_by(trial_group) %>%
+  compare_levels(variable = fp_rate, by = ntrials) %>%
+  ggplot(aes(x = fp_rate, y = factor(ntrials))) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  scale_x_continuous(limits = c(-0.1, 0), breaks = seq(-0.1, 0.1, by = 0.01)) +
+  facet_grid(trial_group ~ . ) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    strip.text = element_text(size = 14),
+    panel.spacing = unit(4, "lines")#
+  )
+
+cowplot::plot_grid(p1, p2, rel_widths = c(6, 5))
+```
+Next we test if there were any effects of learning on the differences between the uncertainty representations. In other words, does the effect of learning dominate over the effect of the uncertainty representation?
+
+From the figure below, we can see that the effect persists for the unertainty representations which reduces FDR (`probability density plot` and `HOPs` of the mean difference), although the magnitude of the mean effect is smaller by around 1 percentage point. This indicates that certain forms of uncertainty representations are reliably better at reducing the FDR.
+
+```{r 10-fdr-diff-nregions-by-vis-nth-trial, fig.width = 8, fig.height = 5}
+p1 <- draws.fit %>%
+  filter(trial_id %in% c(35, 70) ) %>%
+  group_by(condition, trial_id, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  group_by(trial_id) %>%
+  compare_levels(variable = fp_rate, by = condition, comparison = control) %>%
+  ggplot(aes(x = fp_rate, y = condition)) +
+  geom_point(data = data.frame(condition = "raw_data", fp_rate = 0), aes(x = fp_rate, y = condition), size = 3) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  scale_x_continuous(breaks = seq(-0.12, 0.12, by = 0.04)) +
+  facet_grid(trial_id ~ . ) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    panel.spacing = unit(4, "lines")
+  )
+
+p2 <- draws.fit %>%
+  filter(trial_id %in% c(31:35, 66:70) ) %>%
+  mutate( trial_group = ifelse(trial_id <= 35, "Trials 31 - 35", "Trials 66 - 70") ) %>%
+  group_by(condition, trial_group, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  group_by(trial_group) %>%
+  compare_levels(variable = fp_rate, by = condition, comparison = control) %>%
+  ggplot(aes(x = fp_rate, y = condition)) +
+  geom_point(data = data.frame(condition = "raw_data", fp_rate = 0), aes(x = fp_rate, y = condition), size = 3) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  scale_x_continuous(breaks = seq(-0.12, 0.12, by = 0.04)) +
+  facet_grid(trial_group ~ . ) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    panel.spacing = unit(4, "lines")
+  )
+
+cowplot::plot_grid(p1, p2, rel_widths = c(5, 3))
+```
+
+
+#### Comparison of the different using composite metrics (F-scores, MCC and Payout)
+
+*F-scores* are a common metric used in ML to get a composite score for the performance of an algorithm and takes into account the number of True Positives, False Positives and False Negatives. It is given by $\text{F-score} = \frac{2precision}{precision + recall} = \frac{2TP}{2TP + FN + FP}$. We can use this to compare performance across the different uncertainty representation conditions.
+
+In this analysis, we would compare the F-scores of an average user to those of the BH procedure (which we consider optimal for this task).
+
+```{r}
+beta = 1
+df.f1 <- df.bh.mean %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( fscore = (2*tp) / (2*tp + fn + beta*fp) )
+```
+
+First we compare the difference in F-scores when we manipulate $nregions$ i.e. the number of graphs presented to participants (8 or 12). We see that F-scores actually decrease when participants were presented with more graphs (which might be because the decrease in FDR might also entail a decrease in the number of True Positives).
+
+```{r 11-fscore-diff-nregions, fig.width = 8, fig.height = 2}
+p1 <- draws.fit %>%
+  group_by(ntrials, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( fscore = (2*TP) / (2*TP + FN + beta*FP) ) %>%
+  summarise( fscore = mean(fscore), .groups = "drop") %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = fscore, y = factor(ntrials)), .width = c(.95, .8, .5)) +
+  geom_text(data = df.f1, aes(x = fscore, y = factor(ntrials), color = factor(ntrials)), label = "|", size = 8) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+p2 <- draws.fit %>%
+  group_by(ntrials, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( fscore = (2*TP) / (2*TP + FN + beta*FP) ) %>%
+  summarise( fscore = mean(fscore), .groups = "drop") %>%
+  compare_levels( fscore, by = ntrials ) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = fscore, y = ntrials), .width = c(.95, .8, .5)) +
+  xlim(c(-0.1, 0.1))+ 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+cowplot::plot_grid(p1, p2)
+```
+
+Next, comparing the difference in F-scores between different uncertainty representations, we see that all the uncertainty representations, except HOPs of bootstrapped data samples reliably increase F-scores. In other words, the accuracy increases when these uncertainty representations are used. Interestingly, the dotplot results in the highest accuracy (by almost 15 percentage points, 95% CI: [0.08, 0.2]) compared to the Baseline. Other uncertainty representations such as `probability density plots`, `HOPS` and `95% confidence intervals` of the mean difference also improves the F-scores.
+
+```{r 12-fscore-diff-vis, fig.width = 8, fig.height = 4}
+p1.fscore <- draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( fscore = (2*TP) / (2*TP + FN + beta*FP) ) %>%
+  summarise( fscore = mean(fscore), .groups = "drop") %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = fscore, y = condition), .width = c(.95, .8, .5)) +
+  geom_vline(data = df.f1, aes(xintercept = mean(fscore)), color = "#AB2C09") + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+p2.fscore <- draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( fscore = (2*TP) / (2*TP + FN + beta*FP) ) %>%
+  summarise( fscore = mean(fscore), .groups = "drop") %>%
+  compare_levels( fscore, by = condition, comparison = "control" ) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = fscore, y = condition), .width = c(.95, .8, .5)) +
+  geom_point(data = data.frame(condition = "raw_data", fscore = 0), aes(x = fscore, y = condition), size = 3) +
+  geom_vline(xintercept = 0) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.title.y = element_blank()
+  )
+  
+
+cowplot::plot_grid(p1.fscore, p2.fscore)
+```
+The following table summarise the difference in F-scores of the different conditions compared to the baseline.
+
+```{r}
+draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( fscore = (2*TP) / (2*TP + FN + beta*FP) ) %>%
+  summarise( fscore = mean(fscore), .groups = "drop") %>%
+  compare_levels( fscore, by = condition, comparison = "control" ) %>%
+  median_qi(fscore)
+```
+
+*Matthews Correlation Coefficient*: One common drawback of the F-score is that it does not take into account False Negatives. The Matthew's Correlation Coefficient is a proposed measure to address this limitation, and is calculated as $MCC = \frac{TP \times TN - FP \times FN}{\sqrt{(TP + FP)(TP + FN)(TN + FP)(TN + FN)}}$.
+
+```{r 13-mcc-diff-vis, fig.width = 8, fig.height = 4}
+df.mcc <- df.bh.mean %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( mcc = (tp*tn - fp*fn) / sqrt((tp + fp)*(tp + fn)*(tn + fp)*(tn + fn)) )
+
+p1.mcc <- draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( mcc = (TP*TN - FP*FN) / sqrt((TP + FP)*(TP + FN)*(TN + FP)*(TN + FN)) ) %>%
+  summarise( mcc = mean(mcc), .groups = "drop") %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = mcc, y = condition), .width = c(.95, .8, .5)) +
+  geom_vline(data = df.mcc, aes(xintercept = mean(mcc)), color = "#AB2C09") + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+p2.mcc <- draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( mcc = (TP*TN - FP*FN) / sqrt((TP + FP)*(TP + FN)*(TN + FP)*(TN + FN)) ) %>%
+  summarise( mcc = mean(mcc), .groups = "drop") %>%
+  compare_levels( mcc, by = condition, comparison = "control" ) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = mcc, y = condition), .width = c(.95, .8, .5)) +
+  geom_point(data = data.frame(condition = "raw_data", mcc = 0), aes(x = mcc, y = condition), size = 3) +
+  geom_vline(xintercept = 0) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    axis.title.y = element_blank()
+  )
+  
+cowplot::plot_grid(p1.mcc, p2.mcc)
+```
+
+In our study, we incentivise participants using a payout scheme. It might be the case that participants are optimising for the incentives provided. Hence we compare the average payout across the different conditions. Based on this measure, we see that participants in the `probability density plots` and `HOPS` of the mean difference, on average, have higher payouts.
+
+```{r 14-payout-diff-vis, fig.width = 8, fig.height = 4}
+df.payout <- df.bh.mean %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( payout = (tp + tn - fn - 19*fp)*ntrials*20 )
+
+p1 <- draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( payout = (TP + TN - FN - 19*FP)*ntrials*20 ) %>%
+  summarise( payout = mean(payout), .groups = "drop") %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = payout, y = condition), .width = c(.95, .8, .5)) +
+  geom_vline(data = df.payout, aes(xintercept = mean(payout)), color = "#AB2C09") + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+p2 <- draws.fit %>%
+  group_by(condition, .draw, .category) %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate( payout = (TP + TN - FN - 19*FP)*ntrials*20 ) %>%
+  summarise( payout = mean(payout), .groups = "drop") %>%
+  compare_levels( payout, by = condition, comparison = "control" ) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = payout, y = condition), .width = c(.95, .8, .5)) +
+  geom_point(data = data.frame(condition = "raw_data", payout = 0), aes(x = payout, y = condition), size = 3) +
+  geom_vline(xintercept = 0) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+cowplot::plot_grid(p1, p2)
+```
+
+
+## Power analysis
+
+```{r, eval = FALSE}
+draws.fit.3 %>%
+  mutate(.value = .value/ntrials) %>%
+  group_by(condition, ntrials, .category, .draw) %>%
+  summarise(.value = mean(.value)) %>%
+  summarise(
+    mean = mean(.value),
+    sd = sd(.value)
+  )
+```
+
+```{r, eval = FALSE, fig.width = 12, fig.height = 4}
+draws.fit.3 %>% 
+  ungroup() %>%
+  mutate(.value = .value/ntrials) %>%
+  mutate(condition = relevel(condition, "raw-data")) %>%
+  group_by(condition, ntrials, .category, .draw) %>%
+  summarise(.value = mean(.value)) %>%
+  compare_levels(.value, by = condition, comparison = control) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, color = "red", alpha = 0.7) +
+  geom_halfeyeh(aes(x = .value, y = condition), .width = c(.95, .8, .5)) +
+  scale_fill_brewer() +
+  facet_grid(ntrials ~ .category, scales = "free_x")
+```
+
+
+```{r, eval = FALSE, fig.width = 12, fig.height = 4}
+draws.fit.3 %>%
+  mutate(.value = .value/ntrials) %>%
+  group_by(condition, ntrials, .category, .draw) %>%
+  summarise(.value = mean(.value)) %>%
+  ggplot() +
+  geom_halfeyeh(aes(x = .value, y = condition), .width = c(.95, .8, .5)) +
+  scale_fill_brewer() +
+  facet_grid(ntrials ~ .category, scales = "free_x")
+```
+

@@ -1,4 +1,0 @@
-session_id,participant_id,status,started_datetime,completed_date_time,time_taken,age,num_approvals,num_rejections,prolific_score,reviewed_at_datetime,entered_code,Student Status,Country of Birth,Fluent languages,Nationality,Employment Status,First Language,Sex,Current Country of Residence
-5e3ed19e3f87b912b52dc3ad,5e3d59338f20d3000a34aeb9,TIMED-OUT,2020-02-08 15:20:06.863000,,12971.88242,32,0,0,100,,,Yes,United States,English,United States,Full-Time,English,Male,
-5e3ed1a4fb9ed5123bcb8fda,5e3db42ae01a2602b2068256,AWAITING REVIEW,2020-02-08 15:20:34.379000,2020-02-08 15:44:30.930000,1436.551,22,0,0,100,,29ABE0A0,Yes,United Kingdom,English,Ireland,Part-Time,English,Female,United Kingdom
-5e3ef0208d66d9144c07c333,5d9f8573ce3daf0015e3e400,AWAITING REVIEW,2020-02-08 17:30:08.640000,2020-02-08 17:49:27.361000,1158.721,28,145,1,100,,29ABE0A0,No,United States,English,United States,Full-Time,English,Male,United States

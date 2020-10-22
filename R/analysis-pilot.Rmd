@@ -28,6 +28,27 @@ rstan_options(auto_write = TRUE)
 - Database at AWS
 - Exit survey at Qualtrics
 
+## Pilot 1 
+
+```{r}
+df1 <- rbind(
+  read.csv("../data/pilot-data/pilot_1_db.csv")
+)
+
+df2 <- rbind(
+  read.csv("../data/pilot-data/pilot_2_db.csv")
+)
+
+df1 %>%
+  group_by(condition, incentive) %>%
+  summarise(n = n(), .groups = "drop")
+
+df2 %>%
+  group_by(condition, incentive) %>%
+  summarise(n = n(), .groups = "drop")
+```
+
+
 
 
 ## Participants

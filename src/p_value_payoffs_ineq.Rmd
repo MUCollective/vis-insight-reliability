@@ -22,7 +22,9 @@ library(ggrepel)
 
 ## Analytical payoff expectations
 
-**NOTE: There is an error in here somewhere as it does not currently match the simulated output**
+
+**ACHTUNG: The analytical solutions (plotted as lines below) don't match the simulated output**
+
 
 Here we'll try to derive what the expected payoff is given a particular strategy and the probability that the null is true. "strategies" in this case refer to choosing to reject at a given alpha level and p value correction (such as "raw"---no correction---Bonferronni, Benjamini-Hochberg, etc).
 
@@ -148,6 +150,8 @@ E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
 ```
 
 
+### Expected payoff ~ P(null)
+
 ```{r}
 tibble(p_null = 0) %>%
   ggplot(aes(x = p_null)) + 
@@ -157,20 +161,15 @@ tibble(p_null = 0) %>%
 
 
 
+## TODOs
 
-## Simulations of payoffs
+- [ ] Run code backwards to see which $\alpha$ level the -19 incentives are for, with R function to solve for the inverse [link](https://stackoverflow.com/questions/10081479/solving-for-the-inverse-of-a-function-in-r)
+    - [ ] Run B-H with $\alpha = 0.13$ and calculate expected payouts as sanity check
+    - [ ] Plot penalty v.s. $\alpha$
+- [ ] Check $F_p$ equation: it's different from simulation using $p$-values to reject the nulls, see dashed lines on the last figure in Rmd
+    - If $F_p$ is not appropriate (check assumptions!), use simulation to find out what the effective $\alpha$ is 
 
-Set up the simulation:
-
-```{r}
-alpha = .05
-n_panels = 10
-you_pick_two <- 2
-n_obs = 10
-k = 5000
-```
-
-### NEW: Decision making threshold inequality
+## Deriving FP incentive
 
 - The rational user will make a selection (reject the null) if the reward of selecting is greater than not selecting
 - Other side of the decision: the rational user will not make a selection (not reject the null) if the reward of not selecting is greater than selecting. The inequality for "reward if not rejecting the null < reward if rejecting the null"
@@ -196,21 +195,57 @@ $$
 
 
 ```{r}
-fp_penalty <- function(P_null){
+fp_penalty <- function(P_null, alpha){
   n_obs <- 1
-  alpha <- 0.5
   
   ((1- alpha) - (1 - 2 * F_p(alpha, mu = 1, sigma = 1, K = n_obs)) * (1 - P_null)) / (alpha * P_null)
 }
 
-fp_penalty(0.5)
 
 tibble(P_null = 0) %>%
   ggplot(aes(x = P_null)) + 
-  stat_function(fun = ~ fp_penalty(.x)) + 
+  stat_function(fun = ~ fp_penalty(.x, alpha = 0.05)) + 
   xlim(c(0, 1)) + 
   ylab("penalty")
   
+tibble(alpha = 0) %>%
+  ggplot(aes(x = alpha)) + 
+  stat_function(fun = ~ fp_penalty(P_null = 0.5, .x)) + 
+  geom_hline(aes(yintercept = 19)) + 
+  xlim(c(0, 1)) + 
+  ylab("penalty")
+```
+
+### Effective alpha
+
+Take the inverse of FP penalty function, setting penalty = 19, P(null) = 0.5
+
+https://stackoverflow.com/questions/10081479/solving-for-the-inverse-of-a-function-in-r
+
+Is this currying?
+
+
+```{r}
+inverse <- function (f, lower = -100, upper = 100) {
+   function(y) uniroot((function (x) f(x) - y), lower = lower, upper = upper)[1]
+}
+
+fp_penalty_inv <- inverse(function(x) fp_penalty(P_null = 0.5, x), 0, 1 )
+
+fp_penalty_inv(19)
+
+```
+
+## Simulations of payoffs
+
+Set up the simulation:
+
+```{r}
+alpha = .05
+n_panels = 10
+you_pick_two <- 2
+n_obs = 10
+k = 5000
 ```
 
 ### The simulation

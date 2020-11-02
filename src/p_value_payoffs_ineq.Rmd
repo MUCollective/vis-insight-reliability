@@ -156,14 +156,37 @@ E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
 }
 ```
 
+### Understanding F_p
 
-### Expected payoff ~ P(null)
+CDF for $p$-values when the alternative hypothesis is true, a function of $\alpha$ level and sample size
 
 ```{r}
-tibble(p_null = 0) %>%
-  ggplot(aes(x = p_null)) + 
-  stat_function(fun = ~ E_payoff_raw(0.05, n_obs, .x, 1, 1, n_obs)) + 
-  xlim(0, 1)
+
+tibble(alpha = seq(from = 0.01, to = 0.3, length.out = 20),
+      K = 6:25) %>%
+  data_grid(alpha, K) %>%
+  mutate(Fp = F_p(alpha, 1,1,K)) %>%
+  ggplot(aes(alpha, K)) + 
+  geom_contour_filled(aes(z = Fp)) 
+  
+
+```
+
+
+
+### Expected payoff ~ P(null) and alpha
+
+TODO: might be fun to plot results on here
+
+```{r}
+
+tibble(pnull = seq(from=0.05, to=0.95, length.out = 20)) %>%
+  mutate(alpha = pnull) %>%
+  data_grid(pnull, alpha) %>%
+  mutate(payoff = E_payoff_raw(alpha, 10, pnull, 1,1,20)) %>%
+  ggplot(aes(alpha, pnull)) + 
+  geom_contour_filled(aes(z = payoff)) 
+
 ```
 
 

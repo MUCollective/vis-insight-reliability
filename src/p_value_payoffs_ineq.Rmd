@@ -18,6 +18,7 @@ library(purrr)
 library(tidyr)
 library(gganimate)
 library(ggrepel)
+library(modelr)
 ```
 
 ## Analytical payoff expectations
@@ -83,7 +84,13 @@ $$
 \end{align}
 $$
 
-When the null is false with a sample size of $K$, we have the following density function ($f_p$) and distribution function ($F_p$) for the distribution of the p value when the null is false, based on H. M. James Hung, Robert T. O'Neill, Peter Bauer, and Karl Kohne. The Behavior of the P-Value When the Alternative Hypothesis Is True. _Biometrics_ 53, no. 1 (1997): 11-22. [doi:10.2307/2533093](http://doi.org/10.2307/2533093).
+When the null is false with a sample size of $K$, we have the following density function ($f_p$) and distribution function ($F_p$) for the distribution of the p value when the null is false, based on equations 2.1 and 2.2 in H. M. James Hung, Robert T. O'Neill, Peter Bauer, and Karl Kohne. The Behavior of the P-Value When the Alternative Hypothesis Is True. _Biometrics_ 53, no. 1 (1997): 11-22. [doi:10.2307/2533093](http://doi.org/10.2307/2533093).
+
+
+More details:
+
+- $Y$ the response variable follows a normal distribution 
+- $\delta = \frac{\mu}{\sigma}$ is the test parameter in the alternative hypotheses (??)
 
 $$
 \begin{align}
@@ -118,16 +125,16 @@ Thus the expected payoff for the "raw" strategy is:
 $$
 \begin{align}
   E\left[payoff\right|n,strategy = raw] 
-    &= 
+    =& 
       1000E\left[n_{greater\land reject}\right] 
       - 19000E\left[n_{\neg greater \land reject}\right] 
       - 1000E\left[n_{greater \land \neg reject}\right] 
       + 1000E\left[n_{\neg greater \land \neg reject}\right]  \\
-   &=
-      1000nF_p(\alpha|\mu,\sigma,K)P(\neg null)
-      - 19000n\alpha P(null) 
-      - 1000n\left(1 - F_p(\alpha|\mu,\sigma,K)\right)P(\neg null)
-      + 1000n(1 - \alpha) P(null)  \\
+   =&
+      1000nF_p(\alpha|\mu,\sigma,K)P(\neg null)\\
+      &- 19000n\alpha P(null) \\
+      &- 1000n\left(1 - F_p(\alpha|\mu,\sigma,K)\right)P(\neg null)\\
+      &+ 1000n(1 - \alpha) P(null)  \\
 \end{align}
 $$
 
@@ -161,18 +168,8 @@ tibble(p_null = 0) %>%
 
 
 
-## TODOs
+## FP penalty: function of Pnull and alpha
 
-- [ ] Run code backwards to see which $\alpha$ level the -19 incentives are for, with R function to solve for the inverse [link](https://stackoverflow.com/questions/10081479/solving-for-the-inverse-of-a-function-in-r)
-    - [ ] Run B-H with $\alpha = 0.13$ and calculate expected payouts as sanity check
-    - [ ] Plot penalty v.s. $\alpha$
-- [ ] Check $F_p$ equation: it's different from simulation using $p$-values to reject the nulls, see dashed lines on the last figure in Rmd
-    - If $F_p$ is not appropriate (check assumptions!), use simulation to find out what the effective $\alpha$ is 
-
-## Deriving FP incentive
-
-- The rational user will make a selection (reject the null) if the reward of selecting is greater than not selecting
-- Other side of the decision: the rational user will not make a selection (not reject the null) if the reward of not selecting is greater than selecting. The inequality for "reward if not rejecting the null < reward if rejecting the null"
 
 $$
 \begin{align}
@@ -196,7 +193,7 @@ $$
 
 ```{r}
 fp_penalty <- function(P_null, alpha){
-  n_obs <- 1
+  n_obs <- 20 # should be the sample size, not number of regions/panels/hypotheses
   
   ((1- alpha) - (1 - 2 * F_p(alpha, mu = 1, sigma = 1, K = n_obs)) * (1 - P_null)) / (alpha * P_null)
 }
@@ -216,35 +213,89 @@ tibble(alpha = 0) %>%
   ylab("penalty")
 ```
 
-### Effective alpha
+Grid of alpha and P(null)
 
-Take the inverse of FP penalty function, setting penalty = 19, P(null) = 0.5
+```{r}
+tibble(pnull = seq(from=0.05, to=0.95, length.out = 20)) %>%
+  mutate(alpha = pnull) %>%
+  data_grid(pnull, alpha) %>%
+  mutate(penalty = fp_penalty(pnull, alpha)) %>%
+  ggplot(aes(pnull, alpha)) + 
+  geom_contour_filled(aes(z = (penalty))) + 
+  scale_color_viridis_c()
+```
+
+### Inverse: Effective alpha from penalty
+
+Take the inverse of FP penalty function, setting penalty = 19, P(null) = varies
 
 https://stackoverflow.com/questions/10081479/solving-for-the-inverse-of-a-function-in-r
 
-Is this currying?
+The alpha level implied by our incentives is around 0.08 when P(null) is around 0.5; there is variation since we sampled P(null) from a binomial.
+
+```{r}
+# inverse <- function (f, lower = -100, upper = 100) {
+#    function(y) uniroot((function (x) f(x) - y), lower = lower, upper = upper)$root
+# }
+# fp_penalty_inv <- inverse(function(alpha) fp_penalty(P_null = 0.5, alpha), 0, 1 )
+
+fp_penalty_inv <- function(incentive, P_null, l = 0, u = 1) {
+  uniroot(function(alpha) fp_penalty(P_null, alpha) - incentive, lower = l, upper = u)$root
+}
+
+fp_penalty_inv(19, P_null = 0.5)
+
+seq(from = 0.05, to = 0.95, length.out = 10) %>%
+  map_dbl(~ fp_penalty_inv(19, .x))
+
+tibble(pnull = seq(from = 0.05, to = 0.95, length.out = 100) ) %>%
+  mutate(alpha_eff = map_dbl(pnull, ~ fp_penalty_inv(19, .x))) %>%
+  ggplot(aes(pnull, alpha_eff)) + 
+  geom_point() + 
+  geom_hline(aes(yintercept = 0.1428061), color = "red")  +
+  geom_hline(aes(yintercept = 0.05), color = "yellow") 
+
+```
+
+
+## Simulating payoff with wrong alphas
+
+```{r}
+alpha = .05
+n_panels = 10 # number of regions
+n_obs = 20 # number of observations within each region
+k = 100 # number of iterations
+```
 
 
 ```{r}
-inverse <- function (f, lower = -100, upper = 100) {
-   function(y) uniroot((function (x) f(x) - y), lower = lower, upper = upper)[1]
-}
-
-fp_penalty_inv <- inverse(function(x) fp_penalty(P_null = 0.5, x), 0, 1 )
-
-fp_penalty_inv(19)
-
+  tibble(
+    panel = rep(1:n_panels, times = k),
+    run = rep(1:k, each = n_panels),
+    true_mu = rbinom(n_panels * k, 1, prior_prob_greater),
+    actually_greater = true_mu > 0,
+    obs = map(true_mu, rnorm, n = n_obs),
+    p_raw = map_dbl(obs, ~ t.test(.x, alternative = "greater")$p.value)
+  ) %>%
+    group_by(run) %>%
+    mutate(
+      p_bonf = p.adjust(p_raw, method = "bonferroni"),
+    ) 
 ```
+
+
+
+--------
 
 ## Simulations of payoffs
 
 Set up the simulation:
 
 ```{r}
-alpha = .05
+alpha = 0.1428061
 n_panels = 10
 you_pick_two <- 2
-n_obs = 10
+n_obs = 20
 k = 5000
 ```
 
@@ -328,9 +379,9 @@ Let's verify that the multiple comparisons procedures do control FDR (false disc
 rates_df %>%
   ggplot(aes(x = prior_prob_null, y = fdr, color = p_type)) +
   geom_line() +
-  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_hline(yintercept = alpha, linetype = "dashed") +
   geom_label_repel(aes(label = p_type), data = . %>% group_by(p_type) %>% slice(n())) +
-  coord_cartesian(ylim = c(0, .1))
+  coord_cartesian(ylim = c(0, alpha + 0.4))
 ```
 
 Only Bonferroni controls familywise error rate (FWER):
@@ -339,9 +390,9 @@ Only Bonferroni controls familywise error rate (FWER):
 rates_df %>%
   ggplot(aes(x = prior_prob_null, y = fwer, color = p_type)) +
   geom_line() +
-  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_hline(yintercept = alpha, linetype = "dashed") +
   geom_label_repel(aes(label = p_type), data = . %>% group_by(p_type) %>% slice(n())) +
-  coord_cartesian(ylim = c(0, .2))
+  coord_cartesian(ylim = c(0, alpha  +0.4))
 ```
 
 ### Payoffs

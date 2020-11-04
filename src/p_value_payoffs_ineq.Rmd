@@ -156,20 +156,43 @@ E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
 }
 ```
 
-### Understanding F_p
+### Understanding fp and Fp
+
+```{r}
+expand.grid(p = seq(from = 0.01, to = 0.99, length.out = 100),
+            # K = c(15, 30, 60, 80)) %>%
+       K = seq.int(from = 10, by = 5, length.out = 20)) %>%
+  mutate(fp = f_p(p, 1,3,K)) %>%
+  ggplot(aes(p,fp, color = K)) + 
+  geom_line(aes(group = K)) + 
+  ylab("Density of p") + 
+  labs(title="Behavior of p-value when alt H is true", 
+       subtitle = "mu = 1, sigma = 3") + 
+  scale_color_viridis_c() +
+  scale_x_continuous(trans = "log2")
+```
+```{r}
+expand.grid(p = seq(from = 0.01, to = 0.99, length.out = 100),
+       sigma = c(8, 4, 3, 1)) %>%
+  mutate(fp = f_p(p, 1,sigma, 80)) %>%
+  ggplot(aes(p,fp, color = sigma)) + 
+  geom_line(aes(group = sigma)) + 
+  ylab("Density of p") + 
+  labs(title="Behavior of p-value when alt H is true") +
+  scale_color_viridis_c() 
+```
+
 
 CDF for $p$-values when the alternative hypothesis is true, a function of $\alpha$ level and sample size
 
 ```{r}
-
 tibble(alpha = seq(from = 0.01, to = 0.3, length.out = 20),
       K = 6:25) %>%
   data_grid(alpha, K) %>%
   mutate(Fp = F_p(alpha, 1,1,K)) %>%
   ggplot(aes(alpha, K)) + 
-  geom_contour_filled(aes(z = Fp)) 
-  
-
+  geom_contour_filled(aes(z = 1- Fp))  +
+  labs(title = "alpha and beta")
 ```
 
 
@@ -254,7 +277,7 @@ Take the inverse of FP penalty function, setting penalty = 19, P(null) = varies
 
 https://stackoverflow.com/questions/10081479/solving-for-the-inverse-of-a-function-in-r
 
-The alpha level implied by our incentives is around 0.08 when P(null) is around 0.5; there is variation since we sampled P(null) from a binomial.
+The alpha level implied by our incentives is around 0.14 when P(null) is around 0.5; there is variation since we sampled P(null) from a binomial.
 
 ```{r}
 # inverse <- function (f, lower = -100, upper = 100) {
@@ -278,32 +301,6 @@ tibble(pnull = seq(from = 0.05, to = 0.95, length.out = 100) ) %>%
   geom_hline(aes(yintercept = 0.1428061), color = "red")  +
   geom_hline(aes(yintercept = 0.05), color = "yellow") 
 
-```
-
-
-## Simulating payoff with wrong alphas
-
-```{r}
-alpha = .05
-n_panels = 10 # number of regions
-n_obs = 20 # number of observations within each region
-k = 100 # number of iterations
-```
-
-
-```{r}
-  tibble(
-    panel = rep(1:n_panels, times = k),
-    run = rep(1:k, each = n_panels),
-    true_mu = rbinom(n_panels * k, 1, prior_prob_greater),
-    actually_greater = true_mu > 0,
-    obs = map(true_mu, rnorm, n = n_obs),
-    p_raw = map_dbl(obs, ~ t.test(.x, alternative = "greater")$p.value)
-  ) %>%
-    group_by(run) %>%
-    mutate(
-      p_bonf = p.adjust(p_raw, method = "bonferroni"),
-    ) 
 ```
 
 
@@ -425,17 +422,19 @@ Mean payoff by incentive structure and p value correction type:
 ```{r}
 rates_df %>%
   gather(payout_type, payout, mean_payout, mean_fdr_payout, mean_fwer_payout) %>%
-  filter(p_type != "p_all") %>%
+  filter(payout_type == "mean_payout") %>%
+  filter(! p_type %in% c("p_all")) %>%
   ggplot(aes(x = prior_prob_null, y = payout, color = p_type)) +
   geom_line() +
-  facet_wrap(~ payout_type) +
+  # facet_wrap(~ payout_type) +
   stat_function(aes(color = "p_raw"), 
     fun = ~ E_payoff_raw(alpha, n = n_panels, p_null = .x, mu = 1, sigma = 1, K = n_obs), 
     linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
   stat_function(aes(color = "p_bonf"), 
     fun = ~ E_payoff_raw(alpha / n_panels, n = n_panels, p_null = .x, mu = 1, sigma = 1, K = n_obs), 
     linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
-  coord_cartesian(ylim = c(-6000, 10000))
+  coord_cartesian(ylim = c(-6000, 10000)) + 
+  labs(title = "Simulated and theoretical payouts using different strategies")
 ```
 
 We can see that under the incentive structure that uses all four corners of the payoff matrix (`mean_payout` column), the Benjamini-Hochberg procedure seems to do well overall.

@@ -243,8 +243,14 @@ fp_penalty <- function(P_null, alpha){
   n_obs <- 20 # should be the sample size, not number of regions/panels/hypotheses
   
   # ((1- alpha) - (1 - 2 * F_p(alpha, mu = 1, sigma = 1, K = n_obs)) * (1 - P_null)) / (alpha * P_null)
+  # ((1- alpha) * P_null + (- 1 + 2 * F_p(alpha, mu = 1, sigma = 1, K = n_obs)) * (1 - P_null)) / (alpha * P_null)
   (1 + (alpha - 2) * P_null)/(alpha * P_null)
 }
+
+fp_penalty_bonf <- function(P_null, alpha, n){
+  (1 + (alpha/n - 2) * P_null)/(alpha/n * P_null)
+}
+
 ```
 
 
@@ -260,9 +266,10 @@ tibble(P_null = 0) %>%
 expand_grid(alpha = seq(from=0.05, to=0.95, length.out = 100),
             P_null = seq(from = 0.3, length.out = 5, by = 0.1)) %>%
   mutate(penalty = fp_penalty(P_null, alpha)) %>%
-  ggplot(aes(x = alpha, y =penalty, color = penalty > 0)) + 
-  geom_line() + 
+  ggplot(aes(x = alpha, y =penalty) )+ 
+  geom_line(aes(color = penalty > 0)) + 
   geom_hline(aes(yintercept = 19)) + 
+  geom_text(aes(0,19,label = 19, vjust = 1), size = 3) + 
   facet_grid(. ~ P_null, labeller = label_both) 
 ```
 
@@ -422,7 +429,7 @@ rates_df %>%
   coord_cartesian(ylim = c(0, alpha  +0.4))
 ```
 
-### Payoffs
+### Plotting payoffs
 
 Mean payoff by incentive structure and p value correction type:
 
@@ -442,6 +449,48 @@ df %>%
   geom_bar() + 
   facet_grid(. ~ nregions) +
   NULL
+
+df %>%
+  mutate(prior_prob_null = ((tn + fp)/nregions)) %>%
+  group_by(nregions) %>%
+  summarize(mean = mean(prior_prob_null), ci = 1.96 * sd(prior_prob_null)) %>%
+  ggplot(aes(factor(nregions), mean)) +
+  geom_pointrange(aes(ymin = mean - ci, ymax = mean + ci)) +
+  labs(title = "P(null) difference")
+
+# Learning effect?
+
+df %>%
+  mutate(correct_rate = (tn + tp)/nregions) %>%
+  group_by(prolific_pid, nregions) %>%
+  summarize(begin = mean(head(correct_rate)), end = mean(tail(correct_rate))) %>%
+  select(prolific_pid, begin, end, nregions) %>%
+  pivot_longer(-c(prolific_pid, nregions)) %>%
+  ggplot(aes(x = name, y = value, group = prolific_pid)) +
+  geom_line(alpha = 0.1) + 
+  facet_grid(. ~ nregions) + 
+  ylim(c(0,1))
+
+
+# Number of things people select are about the same between nregions = 8 and 12
+
+df %>%
+  mutate(select = tp + fp) %>%
+  group_by(nregions) %>%
+  summarize(m = mean(select), ci = 1.96 * sd(select)) %>%
+  ggplot(aes(factor(nregions), m)) + 
+  geom_pointrange(aes(ymin = m - ci, ymax = m + ci))
+
+
+df %>%
+  mutate(any_false_rejection = fp > 0) %>%
+  group_by(prolific_pid, nregions) %>%
+  summarize(fwer = mean(any_false_rejection)) %>%
+  ggplot(aes(x = fwer)) + 
+  geom_density() +
+  facet_grid(nregions ~. ) + 
+  labs(title = "FWER")
+
 ```
 
 
@@ -462,7 +511,7 @@ rates_df %>%
     linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
   geom_jitter(data = payout_df, aes(prior_prob_null, payout), alpha = 0.04) +
   # coord_cartesian(ylim = c(-50000, 12000)) +
-  # coord_cartesian(ylim = c(- 10000, 10000)) +
+  coord_cartesian(ylim = c(- 10000, 10000)) +
   labs(title = glue("Simulated and theoretical payouts using different strategies; nregions = {n_panels}"))
   
 ```

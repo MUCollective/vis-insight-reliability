@@ -27,7 +27,7 @@ K <- 20
 mu <- 1
 sigma <- 1     # ACHTUNG: replace with data from experiment
 p_null <- 0.5
-n_iter <- 1000   # number of iterations in simulation
+n_iter <- 10   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
@@ -42,18 +42,14 @@ F_p <- function(x, mu, sigma, K) {
 }
 
 
+# inverse CDF of p-value
 F_p_inv <- function(q, mu, sigma, K, l = 0, u = 1){
   uniroot(function(p) F_p(p, mu, sigma, K) - q, lower = l, upper = u)$root
 }
 
+# random sample from PDF of p-value using its invCDF
 rfp <- function( mu, sigma){
   q <- runif(1)
-  # the inv CDF
-  # if (length(mu) == 1){
-  #   mu <- rep(mu, n)
-  # }
-  # browser()
-  # map2_dbl(.x = qs, .y = mu, .f = ~ F_p_inv(.x, .y, sigma, K))
   F_p_inv(q, mu, sigma, K)
 }
 ```
@@ -105,5 +101,45 @@ Peeking at fp penalty
 expected_nselect %>%
   mutate(a = (nregions - 2 * nregions * p_null + nregions * E_nselect * p_null)/(E_nselect * p_null))
 
+```
+
+
+## Grid search for the good alpha
+
+### Encapsulate simulation function
+
+
+```{r}
+finding_penalty <- function(alpha_thres, pnull){
+  df <- expand.grid(
+    nregions = c(8, 12),
+    iter = 1:n_iter
+  ) %>%
+    uncount(nregions, .remove = FALSE, .id = "panel") %>%
+    group_by(iter, nregions) %>%
+    mutate(
+      mu = rbinom(nregions, 1, 1 - pnull), 
+      p = map_dbl(mu, ~rfp(.x, sigma)), 
+      p_bh = p.adjust(p, method = "BH"),
+      reject = p_bh < alpha_thres
+    )  %>%
+    summarize(k = sum(reject)) 
+  
+  df %>%
+    select(-iter) %>%
+    group_by(nregions) %>%
+    count(k) %>%
+    mutate(dens = k / sum(k),
+           E_nselectk = k * dens) %>%
+    summarize(E_nselect = sum(E_nselectk)) %>%
+    # formula for a
+    mutate(a = (nregions - 2 * nregions * pnull + nregions * E_nselect * pnull)/(E_nselect * pnull))
+}
+
+```
+
+
+```{r}
+finding_penalty(0.2, 0.4)
 ```
 

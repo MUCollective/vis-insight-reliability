@@ -16,23 +16,7 @@ library(modelr)
 library(glue)
 ```
 
-## Overview: Using B-H in the utility inequality
-
-The "raw" strategy uses $P(p < \alpha)$, which is a judgement about individual region/hypothesis. If we use B-H instead, we need to quantify the number of regions/hypotheses that are "significant" after the correction procedure on $p$-values. If there are $k$ hypotheses the participant thinks is significant, this is the quantity the participant uses to make judgements:
-
-\\[
-P(k \text{ tests are significant under B-H at } \alpha)
-\\]
-
-
-In terms of framing, the decision is now "how many hypotheses are significant?", a singular decision for all 8 or 12 hypotheses at once. It is no longer a CDF but a PDF, so what does the distribution over $k$ look like, and how do we reduce a distribution of $k$ down to a single combination of FP penalty and $\alpha$? 
-
-If we start from the stimuli dataset (assuming data generating process is known, a *big* assumption!), we can set an $\alpha$ (but we didn't tell participants the value of $\alpha$) and use simulation to find 8 or 12 p-values. Or alternatively, if we started from $P(null) = 0.5$, we can draw a bunch of $p$-values from the PDF (now $f_p(\alpha \vert \mu, \sigma, K)$ is back in the fold). With whichever way to obtain a list of $p$-values, we then use `p.adjust("BH")` and judge $p < \alpha$ [^cite]. From there, we can get a distribution over possible $k$. The mode of the distribution of $k$ can be plugged into the utility inequality. In other words, the rational participant must decide that the mode of $P(k \vert \text{B-H}, \alpha)$ is the optimal thing to perceive. (Does the total payout decrease if the participants decides on $k \neq k_{mode}$?)
-
-
-
-[^cite]: B-H is a procedure that decides with hypotheses to reject, and adjusts the $p$-values. Ref in https://stats.stackexchange.com/questions/238458/whats-the-formula-for-the-benjamini-hochberg-adjusted-p-value
-
+Overview: Using B-H in the utility inequality
 
 ## Setup params
 
@@ -77,16 +61,9 @@ rfp <- function( mu, sigma){
 
 ## Sampling p-values
 
-```{r}
-# bh_wrap <- function(p){
-#   browser()
-#   p.adjust(p, method = "BH")
-# }
-```
-
 
 ```{r}
-df <- expand.grid(
+(df <- expand.grid(
   nregions = c(8, 12),
   iter = 1:n_iter
 ) %>%
@@ -99,21 +76,34 @@ df <- expand.grid(
     reject = p_bh < alpha
   )  %>%
   summarize(k = sum(reject)) 
+)
 
-df %>%
-  select(-iter) %>%
-  group_by(nregions) %>%
-  count(k) %>%
-  mutate(dens = k / sum(k)) %>%
-  summarize(max(dens))
-  
-  
+
 
 df %>%
   ggplot(aes(x = factor(k))) +
   geom_bar() + 
   facet_grid(. ~ nregions)
 ```
+## Expected value of number of selections
 
+```{r}
+(expected_nselect <- df %>%
+  select(-iter) %>%
+  group_by(nregions) %>%
+  count(k) %>%
+  mutate(dens = k / sum(k),
+         E_nselectk = k * dens) %>%
+  summarize(E_nselect = sum(E_nselectk))
+) 
+```
 
+Peeking at fp penalty
+
+```{r}
+
+expected_nselect %>%
+  mutate(a = (nregions - 2 * nregions * p_null + nregions * E_nselect * p_null)/(E_nselect * p_null))
+
+```
 

@@ -37,13 +37,13 @@ If we start from the stimuli dataset (assuming data generating process is known,
 ## Setup params
 
 ```{r}
-nregions <- 8
+# nregions <- 8
 alpha <- 0.05
 K <- 20
 mu <- 1
 sigma <- 1     # ACHTUNG: replace with data from experiment
 p_null <- 0.5
-n_iter <- 10   # number of iterations in simulation
+n_iter <- 1000   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
@@ -62,19 +62,58 @@ F_p_inv <- function(q, mu, sigma, K, l = 0, u = 1){
   uniroot(function(p) F_p(p, mu, sigma, K) - q, lower = l, upper = u)$root
 }
 
-rfp <- function(n, mu, sigma){
-  qs <- runif(n)
+rfp <- function( mu, sigma){
+  q <- runif(1)
   # the inv CDF
-  map_dbl(.x = qs, .f = ~ F_p_inv(., mu, sigma, K))
+  # if (length(mu) == 1){
+  #   mu <- rep(mu, n)
+  # }
+  # browser()
+  # map2_dbl(.x = qs, .y = mu, .f = ~ F_p_inv(.x, .y, sigma, K))
+  F_p_inv(q, mu, sigma, K)
 }
 ```
+
 
 ## Sampling p-values
 
 ```{r}
-tibble(
-  iter = 1:n_iter,
-  mu = rbinom(n_iter, 1, 1 - p_null) # 1-pnull is the prob for mu != 0
-)
+# bh_wrap <- function(p){
+#   browser()
+#   p.adjust(p, method = "BH")
+# }
 ```
+
+
+```{r}
+df <- expand.grid(
+  nregions = c(8, 12),
+  iter = 1:n_iter
+) %>%
+  uncount(nregions, .remove = FALSE, .id = "panel") %>%
+  group_by(iter, nregions) %>%
+  mutate(
+    mu = rbinom(nregions, 1, 1 - p_null), 
+    p = map_dbl(mu, ~rfp(.x, sigma)), 
+    p_bh = p.adjust(p, method = "BH"),
+    reject = p_bh < alpha
+  )  %>%
+  summarize(k = sum(reject)) 
+
+df %>%
+  select(-iter) %>%
+  group_by(nregions) %>%
+  count(k) %>%
+  mutate(dens = k / sum(k)) %>%
+  summarize(max(dens))
+  
+  
+
+df %>%
+  ggplot(aes(x = factor(k))) +
+  geom_bar() + 
+  facet_grid(. ~ nregions)
+```
+
+
 

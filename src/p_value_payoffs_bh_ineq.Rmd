@@ -27,7 +27,7 @@ K <- 20
 mu <- 1
 sigma <- 1     # ACHTUNG: replace with data from experiment
 p_null <- 0.5
-n_iter <- 10   # number of iterations in simulation
+n_iter <- 1000   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
@@ -84,33 +84,48 @@ df %>%
 ## Expected value of number of selections
 
 ```{r}
-(expected_nselect <- df %>%
-  select(-iter) %>%
+(expected_nselect <-
+   df %>%
   group_by(nregions) %>%
-  count(k) %>%
+  count(k) %>% 
   mutate(dens = k / sum(k),
          E_nselectk = k * dens) %>%
-  summarize(E_nselect = sum(E_nselectk))
-) 
+  summarize(E_nselect = sum(E_nselectk), .groups = "drop")
+)
 ```
 
-Peeking at fp penalty
+## FP penalty from utility inequality
 
 ```{r}
-
 expected_nselect %>%
   mutate(a = (nregions - 2 * nregions * p_null + nregions * E_nselect * p_null)/(E_nselect * p_null))
 
 ```
+
+## Alpha from maximizing payout
+
+Given P(null), FP penalty = 19, etc., what's the $\alpha$ that maximizes the expected payout unter 
+
+```{r}
+(expected_payout <- expected_nselect %>%
+  mutate(E_tp = E_nselect * (1 - p_null),
+         E_tn = (nregions - E_nselect) * p_null,
+         E_fp = E_nselect * p_null,
+         E_fn = (nregions - E_nselect) * (1 - p_null),
+         E_payout = E_tp - 19 * E_fp + E_tn - E_fn)
+)
+```
+
 
 
 ## Grid search for the good alpha
 
 ### Encapsulate simulation function
 
+ACHTUNG: update
 
 ```{r}
-finding_penalty <- function(alpha_thres, pnull){
+finding_payout <- function(alpha_thres){
   df <- expand.grid(
     nregions = c(8, 12),
     iter = 1:n_iter
@@ -118,28 +133,47 @@ finding_penalty <- function(alpha_thres, pnull){
     uncount(nregions, .remove = FALSE, .id = "panel") %>%
     group_by(iter, nregions) %>%
     mutate(
-      mu = rbinom(nregions, 1, 1 - pnull), 
+      mu = rbinom(nregions, 1, 1 - p_null), 
       p = map_dbl(mu, ~rfp(.x, sigma)), 
       p_bh = p.adjust(p, method = "BH"),
       reject = p_bh < alpha_thres
     )  %>%
-    summarize(k = sum(reject)) 
+    summarize(k = sum(reject), .groups = "drop") 
   
-  df %>%
-    select(-iter) %>%
+  expected_nselect <-
+    df %>%
     group_by(nregions) %>%
-    count(k) %>%
+    count(k) %>% 
     mutate(dens = k / sum(k),
            E_nselectk = k * dens) %>%
-    summarize(E_nselect = sum(E_nselectk)) %>%
-    # formula for a
-    mutate(a = (nregions - 2 * nregions * pnull + nregions * E_nselect * pnull)/(E_nselect * pnull))
+    summarize(E_nselect = sum(E_nselectk), .groups = "drop")
+  
+  expected_payout <- expected_nselect %>%
+    mutate(E_tp = E_nselect * (1 - p_null),
+           E_tn = (nregions - E_nselect) * p_null,
+           E_fp = E_nselect * p_null,
+           E_fn = (nregions - E_nselect) * (1 - p_null),
+           E_payout = E_tp - 19 * E_fp + E_tn - E_fn)
+  
+  expected_payout
 }
 
 ```
 
 
 ```{r}
-finding_penalty(0.2, 0.4)
+sim_df <- seq(from = 0.05, to = 0.5, by = 0.025) %>%
+  set_names() %>%
+  map_df(~finding_payout(.), .id = "alpha") 
+ 
+sim_df %>% 
+  ggplot(aes(alpha, E_payout)) + 
+  geom_point() + 
+  facet_grid(. ~ nregions)
+
+
+  
 ```
+
+
 

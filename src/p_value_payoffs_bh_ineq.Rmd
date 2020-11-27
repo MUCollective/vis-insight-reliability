@@ -16,18 +16,17 @@ library(modelr)
 library(glue)
 ```
 
-Overview: Using B-H in the utility inequality
+Overview: Using B-H in justifying the FP penalty = 19
 
 ## Setup params
 
 ```{r}
-# nregions <- 8
 alpha <- 0.05
 K <- 20
-mu <- 1
-sigma <- 1     # ACHTUNG: replace with data from experiment
+mu <- 1.5
+sigma <- 2.5     # ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli
 p_null <- 0.5
-n_iter <- 1000   # number of iterations in simulation
+n_iter <- 3000   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
@@ -122,7 +121,6 @@ Given P(null), FP penalty = 19, etc., what's the $\alpha$ that maximizes the exp
 
 ### Encapsulate simulation function
 
-ACHTUNG: update
 
 ```{r}
 finding_payout <- function(alpha_thres){
@@ -162,12 +160,14 @@ finding_payout <- function(alpha_thres){
 
 
 ```{r}
-sim_df <- seq(from = 0.05, to = 0.5, by = 0.025) %>%
+sim_df <- seq(from = 0.05, to = 0.5, by = 0.01) %>%
   set_names() %>%
   map_df(~finding_payout(.), .id = "alpha") 
  
+
+
 sim_df %>% 
-  ggplot(aes(alpha, E_payout)) + 
+  ggplot(aes(as.numeric(alpha), E_payout)) + 
   geom_point() + 
   facet_grid(. ~ nregions)
 

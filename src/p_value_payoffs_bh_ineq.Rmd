@@ -21,12 +21,12 @@ Overview: Using B-H in justifying the FP penalty = 19
 ## Setup params
 
 ```{r}
-alpha <- 0.05
-K <- 20
+alpha <- 0.05    # not using in simulation
+K <- 20          # number of data points in a hypothesis/region
 mu <- 1.5
 sigma <- 2.5     # ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli
 p_null <- 0.5
-n_iter <- 3000   # number of iterations in simulation
+n_iter <- 1000   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
@@ -68,9 +68,14 @@ rfp <- function( mu, sigma){
     mu = rbinom(nregions, 1, 1 - p_null), 
     p = map_dbl(mu, ~rfp(.x, sigma)), 
     p_bh = p.adjust(p, method = "BH"),
-    reject = p_bh < alpha
+    reject_raw = p < alpha,
+    reject_bh = p_bh < alpha
   )  %>%
-  summarize(k = sum(reject)) 
+  summarize(k_pnull_count = sum(mu),
+            k_raw = sum(reject_raw),
+            k_bh = sum(reject_bh)) %>%
+  pivot_longer(cols = starts_with("k_"), names_to = "method", values_to = "k") %>%
+  mutate(method = fc)
 )
 
 
@@ -78,18 +83,15 @@ rfp <- function( mu, sigma){
 df %>%
   ggplot(aes(x = factor(k))) +
   geom_bar() + 
-  facet_grid(. ~ nregions)
+  facet_grid(nregions ~ method)
 ```
 ## Expected value of number of selections
 
 ```{r}
 (expected_nselect <-
    df %>%
-  group_by(nregions) %>%
-  count(k) %>% 
-  mutate(dens = k / sum(k),
-         E_nselectk = k * dens) %>%
-  summarize(E_nselect = sum(E_nselectk), .groups = "drop")
+   group_by(nregions) %>%
+   summarise(E_nselect = mean(k), .groups = "drop")
 )
 ```
 
@@ -121,6 +123,7 @@ Given P(null), FP penalty = 19, etc., what's the $\alpha$ that maximizes the exp
 
 ### Encapsulate simulation function
 
+Each call to `finding_payout` has a different $\alpha$ value. Within each call, create `n_iter` sets of p-values
 
 ```{r}
 finding_payout <- function(alpha_thres){
@@ -141,10 +144,7 @@ finding_payout <- function(alpha_thres){
   expected_nselect <-
     df %>%
     group_by(nregions) %>%
-    count(k) %>% 
-    mutate(dens = k / sum(k),
-           E_nselectk = k * dens) %>%
-    summarize(E_nselect = sum(E_nselectk), .groups = "drop")
+    summarize(E_nselect = mean(k), .groups = "drop")
   
   expected_payout <- expected_nselect %>%
     mutate(E_tp = E_nselect * (1 - p_null),

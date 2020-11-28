@@ -1,8 +1,7 @@
 ---
-title: "B-H incentives"
+title: "B-H for incentive calculation"
 output: html_document
 ---
-
 
 ```{r setup, warning = FALSE, message = FALSE}
 library(ggplot2)
@@ -14,28 +13,37 @@ library(gganimate)
 library(ggrepel)
 library(modelr)
 library(glue)
+library(forcats)
 ```
 
-Overview: Using B-H in justifying the FP penalty = 19
+Purpose of this document: Using Benjamini-Hochberg to justify the FP penalty being 19. The simulation will give us the expected total payout under B-H and FP penalty = 19, so we can create a grid of $\alpha$'s and see which $alpha$ gives the highest payout. 
+
+
+<!-- Previous iteration [[202011120919 Alpha level and FP penalty explainer]] -->
 
 ## Setup params
 
 ```{r}
 alpha <- 0.05    # not using in simulation
 K <- 20          # number of data points in a hypothesis/region
-mu <- 1.5
-sigma <- 2.5     # ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli
-p_null <- 0.5
+mu <- 1.5        # sample mean in a hypothesis/region
+sigma <- 2.5     # ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli, 0.6 is the average
+p_null <- 0.5    # the bane of my existance 
 n_iter <- 1000   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
 
+- Definitions of PDF and CDF from [@hung_behavior_1997]
+- PDF is sampled through random draws from the uniform [0, 1] quantile space, then looked up through the inverse CDF function (`uniroot`). 
+
 ```{r}
+# PDF 
 f_p <- function(x, mu, sigma, K) {
   dnorm(qnorm(1 - x) - sqrt(K) * mu / sigma) / dnorm(qnorm(1 - x))
 }
 
+# CDF
 F_p <- function(x, mu, sigma, K) {
   1 - pnorm(qnorm(1 - x) - sqrt(K) * mu / sigma)
 }
@@ -56,8 +64,21 @@ rfp <- function( mu, sigma){
 
 ## Sampling p-values
 
+Trying out the simulation with one $\alpha$ defined above. 
 
-```{r}
+- `n_iter` of "trials" in our experiment
+- For each trial, draw 8 or 12 true $\mu$ (0 or $\mu$) from $Bin(n, 1- P(null))$
+- With the $\mu$ and pre-specified $\sigma$ et al., draw 8 or 12 $p$-values 
+- Do the B-H and reject hypotheses/regions accordingly
+- Results are `n_iter` of # of rejections under B-H, for both 8 and 12 regions
+
+Well, the code actually compares three things
+
+1. # rejections under B-H
+2. # rejections without correction
+3. The actual number of true hypotheses, the $\mu$'s sampled from the $Binomial(n, 0.5)$
+
+```{r warning = FALSE}
 (df <- expand.grid(
   nregions = c(8, 12),
   iter = 1:n_iter
@@ -65,26 +86,26 @@ rfp <- function( mu, sigma){
   uncount(nregions, .remove = FALSE, .id = "panel") %>%
   group_by(iter, nregions) %>%
   mutate(
-    mu = rbinom(nregions, 1, 1 - p_null), 
+    mu = mu * rbinom(nregions, 1, 1 - p_null), 
     p = map_dbl(mu, ~rfp(.x, sigma)), 
     p_bh = p.adjust(p, method = "BH"),
     reject_raw = p < alpha,
     reject_bh = p_bh < alpha
   )  %>%
-  summarize(k_pnull_count = sum(mu),
+  summarize(k_p_not_null_count = sum(mu != 0), 
             k_raw = sum(reject_raw),
-            k_bh = sum(reject_bh)) %>%
-  pivot_longer(cols = starts_with("k_"), names_to = "method", values_to = "k") %>%
-  mutate(method = fc)
+            k_bh = sum(reject_bh), .groups = "drop_last") %>%
+  pivot_longer(cols = starts_with("k_"), names_to = "method", values_to = "k")  %>%
+  mutate(method = fct_relevel(method, levels = c("k_p_not_null_count", "k_raw", "k_bh")))
 )
 
-
-
 df %>%
-  ggplot(aes(x = factor(k))) +
+  ggplot(aes(x = (k))) +
   geom_bar() + 
-  facet_grid(nregions ~ method)
+  facet_grid(method ~ nregions)
 ```
+
+
 ## Expected value of number of selections
 
 ```{r}
@@ -107,9 +128,12 @@ expected_nselect %>%
 
 Given P(null), FP penalty = 19, etc., what's the $\alpha$ that maximizes the expected payout unter 
 
+
+ACHTUNG: $E[n_{TP}] = E[n_{select} * P(\neg null)]$ is conservative because if people are ordering hypotheses/regions by $p$-values, the hypotheses they select should have a better chance than $P(\neg null)$ to be true. 
+
 ```{r}
 (expected_payout <- expected_nselect %>%
-  mutate(E_tp = E_nselect * (1 - p_null),
+  mutate(E_tp = E_nselect * (1 - p_null), 
          E_tn = (nregions - E_nselect) * p_null,
          E_fp = E_nselect * p_null,
          E_fn = (nregions - E_nselect) * (1 - p_null),

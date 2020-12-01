@@ -1,23 +1,25 @@
 ---
 title: "B-H for incentive calculation"
-output: html_document
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
 ---
 
 ```{r setup, warning = FALSE, message = FALSE}
 library(ggplot2)
 library(dplyr)
-library(tidybayes)
 library(purrr)
+library(furrr)
+library(beepr)
 library(tidyr)
-library(gganimate)
-library(ggrepel)
-library(modelr)
-library(glue)
 library(forcats)
 ```
 
-Purpose of this document: Using Benjamini-Hochberg to justify the FP penalty being 19. The simulation will give us the expected total payout under B-H and FP penalty = 19, so we can create a grid of $\alpha$'s and see which $alpha$ gives the highest payout. 
+Purpose of this document: Using Benjamini-Hochberg to justify the FP penalty being 19. The simulation will give us the expected total payout under B-H and FP penalty = 19, so we can create a grid of $\alpha$'s and $P(null)$'s and see which $alpha$ gives the highest payout. 
 
+
+Executive summary: under B-H, $\alpha = 0.01$ (the lowest tested on the simulation) gives the highest expected total payout. Without any correction strategy, $\alpha = 0.17 \sim 0.2$ maximizes payout.
 
 <!-- Previous iteration [[202011120919 Alpha level and FP penalty explainer]] -->
 
@@ -32,7 +34,7 @@ mu <- 1.5        # sample mean in a hypothesis/region
 sigma <- 2.5     
 
 p_null <- 0.5    # the bane of my existance 
-n_iter <- 100   # number of iterations in simulation
+n_iter <- 5000   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
@@ -166,10 +168,10 @@ Putting the above pieces together, we vary $alpha$ and $P(null)$ but keep $\mu$,
 
 ### Encapsulate simulation function
 
-Each call to `finding_payout` has a different $\alpha$ value. Within each call, create `n_iter` sets of p-values
+This is the same code as above
 
 ```{r}
-finding_payout <- function(alpha_thres, p_null){
+finding_payout <- function(alpha, p_null){
   df <-
     expand.grid(
       nregions = c(8, 12),
@@ -194,40 +196,118 @@ finding_payout <- function(alpha_thres, p_null){
                fn = sum(!true & !reject), 
                .groups = "drop_last") %>%
     mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
-           pay = (tp - 19 * fp + tn - fn) * 1) 
+           pay = (tp - 19 * fp + tn - fn) * 1,
+           power = (tp)/(tp + fn)) # this produces NA's; set to 1?
   
 df %>%
   group_by(method, nregions) %>%
   summarize(E_pay = mean(pay), 
-            E_fdr = mean(fdr), .groups = "drop")
+            E_fdr = mean(fdr), 
+            power = mean(power), .groups = "drop")
 }
 
 ```
 
+setting seed https://davisvaughan.github.io/furrr/articles/articles/gotchas.html#argument-evaluation
+
+```{r, eval= FALSE}
+plan(multisession, workers = 5)
+options <- furrr_options(seed = 123)
+
+
+(sim_df <- expand.grid(
+    alpha = seq(from = 0.01, to = 0.5, by = 0.01),
+    p_null = ppoints(20)
+  ) %>%
+    split(1:nrow(.)) %>%
+    future_map_dfr(~cbind(.x, finding_payout(.$alpha, .$p_null), row.names = NULL), .options = options)
+)
+
+beep()
+saveRDS(sim_df, "sim_n5000_alpha_pnull.rds")
+```
 ```{r}
-expand.grid(
-  alpha_thres = c(0.05, 0.1),
-  p_null = c(0.4, 0.5, 0.6)
-) %>%
-  split(1:nrow(.)) %>%
-  map_dfr(~cbind(.x, finding_payout(.$alpha_thres, .$p_null), row.names = NULL))
+sim_df <- readRDS("sim_n5000_alpha_pnull.rds")
 ```
 
+### Results
+
 ```{r}
-sim_df <- seq(from = 0.05, to = 0.5, by = 0.01) %>%
-  set_names() %>%
-  map_df(~finding_payout(.), .id = "alpha") 
- 
-
-
 sim_df %>% 
-  ggplot(aes(as.numeric(alpha), E_payout)) + 
-  geom_point() + 
-  facet_grid(. ~ nregions)
+  ggplot(aes(p_null, E_pay, color = alpha)) + 
+  geom_point(alpha = 0.2) + 
+  geom_line(data = sim_df %>% filter(alpha == 0.05)) + 
+  facet_grid(nregions ~ method) + 
+  scale_color_viridis_c() + 
+  theme_minimal()  +
+  labs(title = "Which alpha maximizes payout?", subtitle = "Line drawn at alpha = 0.05")
+```
+
 
 
   
+```{r}
+sim_df %>% 
+  ggplot(aes(alpha, E_pay, color = p_null)) + 
+  # geom_point(alpha = 0.2) +
+  geom_line(aes(group = p_null), alpha = 0.5)  +
+  # geom_line(data = sim_df %>% filter(p_null %in% c(0.025, 0.475, 0.975)), aes(group = p_null)) + 
+  facet_grid(nregions ~ method) + 
+  scale_color_viridis_c() + 
+  theme_minimal() +
+  labs(title = "Which alpha maximizes payout?", subtitle = "alpha = 0.01 for B-H")
+```
+```{r}
+sim_df %>%
+  group_by(nregions, method) %>%
+  slice_max(E_pay)
 ```
 
 
+
+
+```{r}
+sim_df %>%
+  ggplot(aes(alpha, E_fdr, color = p_null)) +
+  geom_point(alpha = 0.2) + 
+  geom_line(data = sim_df %>% filter(p_null == 0.475)) +
+  geom_abline(aes(intercept = 0, slope = 1)) + 
+  facet_grid(. ~ method) + 
+  scale_color_viridis_c() + 
+  theme_minimal() + 
+  labs(title = "FDR under B-H and raw strategy", subtitle = "Diagonal line is alpha = FDR, colored line at P(null) = 0.5")
+```
+
+
+```{r}
+sim_df %>%
+  ggplot(aes(alpha, power)) + 
+  geom_point(aes(color = p_null), alpha = 0.2) + 
+  geom_vline(aes(xintercept = 0.05)) +
+  geom_hline(aes(yintercept = 0.8)) +
+  facet_grid(nregions ~ method) +
+  scale_color_viridis_c() + 
+  theme_minimal() +
+  labs(title="Power is higher without correction", subtitle = "A bunch of NA's for when P(null) is high")
+```
+
+## Comparing simulation to experimental stimuli data
+
+
+```{r}
+data.sim.12reg <- readRDS(file = "../data/simulated_data_12regions.rds")
+data.sim.8reg <- readRDS(file = "../data/simulated_data_8regions.rds")
+```
+
+```{r}
+(df_stimuli <- bind_rows(list("12" = data.sim.12reg, "8" = data.sim.8reg), .id = "nregions") %>%
+  select(-c(region_idx, effect_size, population)) %>%
+  mutate(nregions = as.numeric(nregions))
+)
+```
+
+```{r}
+names(data.sim.12reg)
+dim(data.sim.8reg)
+```
 

@@ -26,16 +26,21 @@ Purpose of this document: Using Benjamini-Hochberg to justify the FP penalty bei
 ```{r}
 alpha <- 0.05    # not using in simulation
 K <- 20          # number of data points in a hypothesis/region
+
+# ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli, picking the average here
 mu <- 1.5        # sample mean in a hypothesis/region
-sigma <- 2.5     # ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli, 0.6 is the average
+sigma <- 2.5     
+
 p_null <- 0.5    # the bane of my existance 
-n_iter <- 1000   # number of iterations in simulation
+n_iter <- 100   # number of iterations in simulation
 ```
 
 ## p-value PDF, CDF, invCDF defs
 
-- Definitions of PDF and CDF from [@hung_behavior_1997]
-- PDF is sampled through random draws from the uniform [0, 1] quantile space, then looked up through the inverse CDF function (`uniroot`). 
+- Definitions of PDF and CDF of the $p$-value from [@hung_behavior_1997]
+- Random draws from the $p$-value PDF `rp` is sampled through random draws from the uniform [0, 1] quantile space, then looked up through the inverse CDF function (using `uniroot`). 
+- **Limitation**: These functions are dependent on the $\mu$, $\sigma$, $K$ parameters. These parameters are most likely different IRL but we are not using other values yet.
+
 
 ```{r}
 # PDF 
@@ -55,31 +60,28 @@ F_p_inv <- function(q, mu, sigma, K, l = 0, u = 1){
 }
 
 # random sample from PDF of p-value using its invCDF
-rfp <- function( mu, sigma){
+rp <- function( mu, sigma){
   q <- runif(1)
   F_p_inv(q, mu, sigma, K)
 }
 ```
 
 
-## Sampling p-values
+## Expected value of number of selections
 
-Trying out the simulation with one $\alpha$ defined above. 
+We can get the expected number of selections under B-H with a few simulation iterations and take the average. Given that all the parameters, such as $\alpha$, are fixed, the uncertainty comes from the sampling of true $\mu$'s from a Binomial and the random sampling of $p$-value.
 
-- `n_iter` of "trials" in our experiment
+
+- The simulation has `n_iter` of "trials" in our experiment
 - For each trial, draw 8 or 12 true $\mu$ (0 or $\mu$) from $Bin(n, 1- P(null))$
 - With the $\mu$ and pre-specified $\sigma$ et al., draw 8 or 12 $p$-values 
 - Do the B-H and reject hypotheses/regions accordingly
-- Results are `n_iter` of # of rejections under B-H, for both 8 and 12 regions
+- We get the number of rejections that _should_ happen under B-H, for both 8 and 12 regions.
 
-Well, the code actually compares three things
-
-1. # rejections under B-H
-2. # rejections without correction
-3. The actual number of true hypotheses, the $\mu$'s sampled from the $Binomial(n, 0.5)$
 
 ```{r warning = FALSE}
-(df <- expand.grid(
+(df <-
+  expand.grid(
   nregions = c(8, 12),
   iter = 1:n_iter
 ) %>%
@@ -87,101 +89,129 @@ Well, the code actually compares three things
   group_by(iter, nregions) %>%
   mutate(
     mu = mu * rbinom(nregions, 1, 1 - p_null), 
-    p = map_dbl(mu, ~rfp(.x, sigma)), 
-    p_bh = p.adjust(p, method = "BH"),
-    reject_raw = p < alpha,
-    reject_bh = p_bh < alpha
+    p_raw = map_dbl(mu, ~rp(.x, sigma)), 
+    p_bh = p.adjust(p_raw, method = "BH"),
   )  %>%
-  summarize(k_p_not_null_count = sum(mu != 0), 
-            k_raw = sum(reject_raw),
-            k_bh = sum(reject_bh), .groups = "drop_last") %>%
-  pivot_longer(cols = starts_with("k_"), names_to = "method", values_to = "k")  %>%
-  mutate(method = fct_relevel(method, levels = c("k_p_not_null_count", "k_raw", "k_bh")))
+  pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
+  mutate(
+    true = mu == 0, # null hypothesis being true
+    reject = p < alpha
+  ) %>%
+  group_by(iter, nregions, method) %>%
+  summarize( tp = sum(!true & reject),
+             fp = sum(true & reject),
+             tn = sum(true & !reject),
+             fn = sum(!true & !reject), 
+             .groups = "drop_last") %>%
+  mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
+         pay = (tp - 19 * fp + tn - fn) * 1) 
 )
+```
 
-df %>%
-  ggplot(aes(x = (k))) +
-  geom_bar() + 
-  facet_grid(method ~ nregions)
+```{r}
+df %>% 
+  group_by(method) %>%
+  summarize(mean(fdr))
 ```
 
 
-## Expected value of number of selections
+Once we have the distribution of # of rejections B-H says we should make, we can take the average and get the expected value for number of selections. 
 
 ```{r}
 (expected_nselect <-
    df %>%
-   group_by(nregions) %>%
-   summarise(E_nselect = mean(k), .groups = "drop")
+   group_by(method, nregions) %>%
+   summarise(E_nselect = mean(tp + fp), .groups = "drop")
 )
 ```
 
-## FP penalty from utility inequality
+
+
+## Expected total payout
+
+There have been three iterations of expected total payout
+
+1. $E[n_{FP}] = E[n_{reject}] * P(null)$. This is (even more) problematic now that we're using B-H. It can overestimate $n_{FP}$ because if people are ordering hypotheses/regions by $p$-values, they should be making false discoveries at a lower rate than $P(null)$.
+2. $E[n_{FP}] = E[n_{reject}] * P(true\vert reject) = E[n_{reject}] * \alpha$. By definition, $P(true \vert reject) = E\left[\frac{n_{true \wedge  reject}}{ n_{reject}} \right]= FDR \leq \alpha$, and we say B-H controls FDR at level $\alpha$. But $\alpha$ here is an upperbound instead of the expected value, see [@benjamini_controlling_1995]. 
+  - The problem is, we don't have a good expression for $E[n_{TP}]$. If we write $E[n_{TP}] = E[n_{reject}] * P(\neg true \vert reject)$, we don't have an expression for $P(\neg true \vert reject)$ like $FDR \leq \alpha$. If we just use the joint probability $E[n_{TP}] = n P(\neg true, reject)$, $P(\neg true, reject) =1 - \beta$, but there is no closed-form for power for B-H; [@benjamini_controlling_1995] had to run a simulation. So...
+3. Screw it, just use the simulation results. Basically the original simulation.
+
 
 ```{r}
-expected_nselect %>%
-  mutate(a = (nregions - 2 * nregions * p_null + nregions * E_nselect * p_null)/(E_nselect * p_null))
+# (expected_payout <- expected_nselect %>%
+#   mutate(E_tp = E_nselect * (1 - alpha),
+#          E_tn = (nregions - E_nselect) * alpha,
+#          E_fp = E_nselect * p_null,
+#          E_fn = (nregions - E_nselect) * (1 - p_null),
+#          E_payout = E_tp - 19 * E_fp + E_tn - E_fn)
+# )
 
-```
-
-## Alpha from maximizing payout
-
-Given P(null), FP penalty = 19, etc., what's the $\alpha$ that maximizes the expected payout unter 
-
-
-ACHTUNG: $E[n_{TP}] = E[n_{select} * P(\neg null)]$ is conservative because if people are ordering hypotheses/regions by $p$-values, the hypotheses they select should have a better chance than $P(\neg null)$ to be true. 
-
-```{r}
-(expected_payout <- expected_nselect %>%
-  mutate(E_tp = E_nselect * (1 - p_null), 
-         E_tn = (nregions - E_nselect) * p_null,
-         E_fp = E_nselect * p_null,
-         E_fn = (nregions - E_nselect) * (1 - p_null),
-         E_payout = E_tp - 19 * E_fp + E_tn - E_fn)
-)
+# (expected_payout <- expected_nselect %>%
+#   mutate(E_tp = E_nselect * (1 - p_null), 
+#          E_tn = (nregions - E_nselect) * p_null,
+#          E_fp = E_nselect * p_null,
+#          E_fn = (nregions - E_nselect) * (1 - p_null),
+#          E_payout = E_tp - 19 * E_fp + E_tn - E_fn)
+# )
+df %>%
+  group_by(method, nregions) %>%
+  summarize(mean(pay))
 ```
 
 
 
 ## Grid search for the good alpha
 
+Putting the above pieces together, we vary $alpha$ and $P(null)$ but keep $\mu$, $\sigma$ and $K$ the same. 
+
 ### Encapsulate simulation function
 
 Each call to `finding_payout` has a different $\alpha$ value. Within each call, create `n_iter` sets of p-values
 
 ```{r}
-finding_payout <- function(alpha_thres){
-  df <- expand.grid(
-    nregions = c(8, 12),
-    iter = 1:n_iter
-  ) %>%
+finding_payout <- function(alpha_thres, p_null){
+  df <-
+    expand.grid(
+      nregions = c(8, 12),
+      iter = 1:n_iter
+    ) %>%
     uncount(nregions, .remove = FALSE, .id = "panel") %>%
     group_by(iter, nregions) %>%
     mutate(
-      mu = rbinom(nregions, 1, 1 - p_null), 
-      p = map_dbl(mu, ~rfp(.x, sigma)), 
-      p_bh = p.adjust(p, method = "BH"),
-      reject = p_bh < alpha_thres
+      mu = mu * rbinom(nregions, 1, 1 - p_null), 
+      p_raw = map_dbl(mu, ~rp(.x, sigma)), 
+      p_bh = p.adjust(p_raw, method = "BH"),
     )  %>%
-    summarize(k = sum(reject), .groups = "drop") 
+    pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
+    mutate(
+      true = mu == 0, # null hypothesis being true
+      reject = p < alpha
+    ) %>%
+    group_by(iter, nregions, method) %>%
+    summarize( tp = sum(!true & reject),
+               fp = sum(true & reject),
+               tn = sum(true & !reject),
+               fn = sum(!true & !reject), 
+               .groups = "drop_last") %>%
+    mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
+           pay = (tp - 19 * fp + tn - fn) * 1) 
   
-  expected_nselect <-
-    df %>%
-    group_by(nregions) %>%
-    summarize(E_nselect = mean(k), .groups = "drop")
-  
-  expected_payout <- expected_nselect %>%
-    mutate(E_tp = E_nselect * (1 - p_null),
-           E_tn = (nregions - E_nselect) * p_null,
-           E_fp = E_nselect * p_null,
-           E_fn = (nregions - E_nselect) * (1 - p_null),
-           E_payout = E_tp - 19 * E_fp + E_tn - E_fn)
-  
-  expected_payout
+df %>%
+  group_by(method, nregions) %>%
+  summarize(E_pay = mean(pay), 
+            E_fdr = mean(fdr), .groups = "drop")
 }
 
 ```
 
+```{r}
+expand.grid(
+  alpha_thres = c(0.05, 0.1),
+  p_null = c(0.4, 0.5, 0.6)
+) %>%
+  split(1:nrow(.)) %>%
+  map_dfr(~cbind(.x, finding_payout(.$alpha_thres, .$p_null), row.names = NULL))
+```
 
 ```{r}
 sim_df <- seq(from = 0.05, to = 0.5, by = 0.01) %>%

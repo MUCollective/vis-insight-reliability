@@ -1,7 +1,7 @@
 ---
 title: "B-H for incentive calculation"
 output:
-  pdf_document:
+  html_document:
     toc: true
     toc_depth: 2
 ---
@@ -14,6 +14,7 @@ library(furrr)
 library(beepr)
 library(tidyr)
 library(forcats)
+library(patchwork)
 ```
 
 Purpose of this document: Using Benjamini-Hochberg to justify the FP penalty being 19. The simulation will give us the expected total payout under B-H and FP penalty = 19, so we can create a grid of $\alpha$'s and $P(null)$'s and see which $alpha$ gives the highest payout. 
@@ -244,7 +245,17 @@ sim_df %>%
 ```
 
 
-
+```{r}
+sim_df %>% 
+  filter(alpha < 0.2 & method != "p_raw") %>%
+  ggplot(aes(p_null, E_pay, color = alpha)) + 
+  geom_point(alpha = 0.2) + 
+  geom_line(data = sim_df %>% filter(alpha == 0.05 & method != "p_raw")) + 
+  facet_grid(nregions ~ method) + 
+  scale_color_viridis_c() + 
+  theme_minimal()  +
+  labs(title = "Which alpha maximizes payout?", subtitle = "Line drawn at alpha = 0.05")
+```
   
 ```{r}
 sim_df %>% 
@@ -255,7 +266,7 @@ sim_df %>%
   facet_grid(nregions ~ method) + 
   scale_color_viridis_c() + 
   theme_minimal() +
-  labs(title = "Which alpha maximizes payout?", subtitle = "alpha = 0.01 for B-H")
+  labs(title = "Which alpha maximizes payout?", subtitle = "alpha = 0.01 for B-H, 0.18 for raw?")
 ```
 ```{r}
 sim_df %>%
@@ -297,17 +308,75 @@ sim_df %>%
 ```{r}
 data.sim.12reg <- readRDS(file = "../data/simulated_data_12regions.rds")
 data.sim.8reg <- readRDS(file = "../data/simulated_data_8regions.rds")
-```
 
-```{r}
-(df_stimuli <- bind_rows(list("12" = data.sim.12reg, "8" = data.sim.8reg), .id = "nregions") %>%
-  select(-c(region_idx, effect_size, population)) %>%
+(df_stimuli <- bind_rows(
+  list("12" = data.sim.12reg, "8" = data.sim.8reg), 
+  .id = "nregions") %>%
+  select(-c(region_idx, effect_size, population, p_h1)) %>%
   mutate(nregions = as.numeric(nregions))
 )
 ```
 
 ```{r}
-names(data.sim.12reg)
-dim(data.sim.8reg)
+stimuli_fn <- function(df_stimuli, alpha){
+  df_stimuli %>%
+    mutate(p_raw = 
+             map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) %>%
+    group_by(nregions, trial) %>%
+    mutate(p_bh = p.adjust(p_raw, "BH")) %>%
+    select(-data) %>%
+    pivot_longer(starts_with("p_"), names_to = "method", values_to = "p") %>%
+    mutate(reject = p < alpha,
+           true = mu == 0) %>%
+    group_by(trial, nregions, method) %>%
+    summarize( tp = sum(!true & reject),
+               fp = sum(true & reject),
+               tn = sum(true & !reject),
+               fn = sum(!true & !reject), 
+               .groups = "drop_last") %>%
+    mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
+           pay = (tp - 19 * fp + tn - fn) * 1,
+           power = (tp)/(tp + fn)) %>% # this produces NA's; set to 1?
+    group_by(nregions, method) %>%
+    summarize(E_pay = mean(pay), 
+              E_fdr = mean(fdr), 
+              power = mean(power), .groups = "drop")
+}
+
+```
+
+```{r}
+stimuli_alpha_df <- expand.grid(alpha = seq(from = 0.01, to = 0.5, by = 0.01)) %>%
+  split(1:nrow(.)) %>%
+  map_dfr(~ cbind(.x, stimuli_fn(df_stimuli, .$alpha), row.names = NULL))
+```
+
+```{r}
+(p1 <- stimuli_alpha_df %>%
+  ggplot(aes(alpha, E_pay)) + 
+  geom_point() + 
+  facet_grid(nregions ~ method) +
+  scale_color_viridis_c() + 
+  theme_minimal() +
+  labs(title = "t-test on experiment stimuli", subtitle = "P(null) = 0.5")
+)
+```
+
+```{r}
+(p2 <- sim_df %>% 
+  filter(p_null == 0.475) %>%
+  ggplot(aes(alpha, E_pay)) + 
+  # geom_point(alpha = 0.2) +
+  geom_point()  +
+  # geom_line(data = sim_df %>% filter(p_null %in% c(0.025, 0.475, 0.975)), aes(group = p_null)) + 
+  facet_grid(nregions ~ method) + 
+  scale_color_viridis_c() + 
+  theme_minimal() +
+  labs(title = "Simulation results")
+)
+```
+
+```{r}
+p1 + p2 
 ```
 

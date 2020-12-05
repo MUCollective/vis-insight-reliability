@@ -20,7 +20,10 @@ library(patchwork)
 Purpose of this document: Using Benjamini-Hochberg to justify the FP penalty being 19. The simulation will give us the expected total payout under B-H and FP penalty = 19, so we can create a grid of $\alpha$'s and $P(null)$'s and see which $alpha$ gives the highest payout. 
 
 
-Executive summary: under B-H, $\alpha = 0.01$ (the lowest tested on the simulation) gives the highest expected total payout. Without any correction strategy, $\alpha = 0.17 \sim 0.2$ maximizes payout.
+Executive summary: 
+
+- Under B-H, $\alpha = 0.03, 0.04$ around $P(null) = 0.5$ gives the highest expected total payout
+- Without any correction strategy, $\alpha = 0.01$ (the lowest value simulated) maximizes payout around $P(null) = 0.5$.
 
 <!-- Previous iteration [[202011120919 Alpha level and FP penalty explainer]] -->
 
@@ -259,6 +262,7 @@ sim_df %>%
   
 ```{r}
 sim_df %>% 
+  filter(alpha < 0.05) %>%
   ggplot(aes(alpha, E_pay, color = p_null)) + 
   # geom_point(alpha = 0.2) +
   geom_line(aes(group = p_null), alpha = 0.5)  +
@@ -266,12 +270,15 @@ sim_df %>%
   facet_grid(nregions ~ method) + 
   scale_color_viridis_c() + 
   theme_minimal() +
-  labs(title = "Which alpha maximizes payout?", subtitle = "alpha = 0.01 for B-H, 0.18 for raw?")
+  labs(title = "Which alpha maximizes payout?", subtitle = "alpha = 0.02 ~ 0.04")
 ```
 ```{r}
 sim_df %>%
+  # filter(p_null %in% c(0.475, 0.525)) %>%
+  group_by(alpha, nregions, method) %>%
+  summarize(mean = mean(E_pay))  %>%
   group_by(nregions, method) %>%
-  slice_max(E_pay)
+  slice_max(mean)
 ```
 
 

@@ -34,8 +34,8 @@ alpha <- 0.05    # not using in simulation
 K <- 20          # number of data points in a hypothesis/region
 
 # ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli, picking the average here
-mu <- 1.5        # sample mean in a hypothesis/region
-sigma <- 2.5     
+# mu <- 1.5        # sample mean in a hypothesis/region
+# sigma <- 2.5     
 
 p_null <- 0.5    # the bane of my existance 
 n_iter <- 5000   # number of iterations in simulation
@@ -54,9 +54,11 @@ f_p <- function(x, mu, sigma, K) {
   dnorm(qnorm(1 - x) - sqrt(K) * mu / sigma) / dnorm(qnorm(1 - x))
 }
 
+
+
 # CDF
 F_p <- function(x, mu, sigma, K) {
-  1 - pnorm(qnorm(1 - x) - sqrt(K) * mu / sigma)
+  1 - pnorm(qnorm(1 - x) - sqrt(K) * mu/sigma)
 }
 
 
@@ -86,32 +88,38 @@ We can get the expected number of selections under B-H with a few simulation ite
 
 
 ```{r warning = FALSE}
-(df <-
-  expand.grid(
-  nregions = c(8, 12),
-  iter = 1:n_iter
-) %>%
-  uncount(nregions, .remove = FALSE, .id = "panel") %>%
-  group_by(iter, nregions) %>%
-  mutate(
-    mu = mu * rbinom(nregions, 1, 1 - p_null), 
-    p_raw = map_dbl(mu, ~rp(.x, sigma)), 
-    p_bh = p.adjust(p_raw, method = "BH"),
-  )  %>%
-  pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
-  mutate(
-    true = mu == 0, # null hypothesis being true
-    reject = p < alpha
-  ) %>%
-  group_by(iter, nregions, method) %>%
-  summarize( tp = sum(!true & reject),
-             fp = sum(true & reject),
-             tn = sum(true & !reject),
-             fn = sum(!true & !reject), 
-             .groups = "drop_last") %>%
-  mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
-         pay = (tp - 19 * fp + tn - fn) * 1) 
-)
+ (df <-
+    expand.grid(
+      nregions = c(8, 12),
+      iter = 1:n_iter,
+      delta = c(0.4, 0.6, 0.8)
+    ) %>%
+    mutate(mu0 = case_when( delta == 0.4 ~ 1.2,
+      delta == 0.6 ~ 1.5,
+      delta == 0.8 ~ 1.6)) %>%
+    uncount(nregions, .remove = FALSE, .id = "panel") %>%
+    group_by(iter, nregions, delta) %>%
+    mutate(
+      mu = mu0 * rbinom(nregions, 1, 1 - p_null), 
+      sigma = mu0 / delta,
+      p_raw = map2_dbl(mu, sigma, ~rp(.x, .y)), 
+      p_bh = p.adjust(p_raw, method = "BH"),
+    ) %>%
+    pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
+    mutate(
+      true = mu == 0, # null hypothesis being true
+      reject = p < alpha
+    ) %>%
+    group_by(iter, nregions, method, delta) %>%
+    summarize( tp = sum(!true & reject),
+               fp = sum(true & reject),
+               tn = sum(true & !reject),
+               fn = sum(!true & !reject), 
+               .groups = "drop_last") %>%
+    mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
+           pay = (tp - 19 * fp + tn - fn) * 1,
+           power = (tp)/(tp + fn)) # this produces NA's; set to 1?
+ )
 ```
 
 ```{r}
@@ -160,8 +168,10 @@ There have been three iterations of expected total payout
 #          E_payout = E_tp - 19 * E_fp + E_tn - E_fn)
 # )
 df %>%
-  group_by(method, nregions) %>%
-  summarize(mean(pay))
+  group_by(method, nregions, delta) %>%
+  summarize(E_pay = mean(pay), 
+            E_fdr = mean(fdr), 
+            power = mean(power), .groups = "drop")
 ```
 
 
@@ -179,21 +189,26 @@ finding_payout <- function(alpha, p_null){
   df <-
     expand.grid(
       nregions = c(8, 12),
-      iter = 1:n_iter
+      iter = 1:n_iter,
+      delta = c(0.4, 0.6, 0.8)
     ) %>%
+    mutate(mu0 = case_when( delta == 0.4 ~ 1.2,
+      delta == 0.6 ~ 1.5,
+      delta == 0.8 ~ 1.6)) %>%
     uncount(nregions, .remove = FALSE, .id = "panel") %>%
-    group_by(iter, nregions) %>%
+    group_by(iter, nregions, delta) %>%
     mutate(
-      mu = mu * rbinom(nregions, 1, 1 - p_null), 
-      p_raw = map_dbl(mu, ~rp(.x, sigma)), 
+      mu = mu0 * rbinom(nregions, 1, 1 - p_null), 
+      sigma = mu0 / delta,
+      p_raw = map2_dbl(mu, sigma, ~rp(.x, .y)), 
       p_bh = p.adjust(p_raw, method = "BH"),
-    )  %>%
+    ) %>%
     pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
     mutate(
       true = mu == 0, # null hypothesis being true
       reject = p < alpha
     ) %>%
-    group_by(iter, nregions, method) %>%
+    group_by(iter, nregions, method, delta) %>%
     summarize( tp = sum(!true & reject),
                fp = sum(true & reject),
                tn = sum(true & !reject),
@@ -202,9 +217,10 @@ finding_payout <- function(alpha, p_null){
     mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
            pay = (tp - 19 * fp + tn - fn) * 1,
            power = (tp)/(tp + fn)) # this produces NA's; set to 1?
+ 
   
 df %>%
-  group_by(method, nregions) %>%
+  group_by(method, nregions, delta) %>%
   summarize(E_pay = mean(pay), 
             E_fdr = mean(fdr), 
             power = mean(power), .groups = "drop")
@@ -215,12 +231,11 @@ df %>%
 setting seed https://davisvaughan.github.io/furrr/articles/articles/gotchas.html#argument-evaluation
 
 ```{r, eval= FALSE}
-plan(multisession, workers = 5)
+plan(multisession, workers = 13)
 options <- furrr_options(seed = 123)
 
-
 (sim_df <- expand.grid(
-    alpha = seq(from = 0, to = 0.1, by = 0.001),
+    alpha = seq(from = 0.001, to = 0.1, by = 0.001),
     p_null = ppoints(20)
   ) %>%
     split(1:nrow(.)) %>%
@@ -228,10 +243,14 @@ options <- furrr_options(seed = 123)
 )
 
 beep()
-saveRDS(sim_df, "sim_n5000_alpha_pnull.rds")
+# saveRDS(sim_df, "sim_n5000_alpha_pnull.rds")
+saveRDS(sim_df, "sim_n5000_alpha_pnull_delta.rds")
 ```
+
+
 ```{r}
-sim_df <- readRDS("sim_n5000_alpha_pnull.rds")
+# sim_df <- readRDS("sim_n5000_alpha_pnull.rds")
+sim_df <- readRDS("sim_n5000_alpha_pnull_delta.rds")
 ```
 
 ### Results
@@ -241,7 +260,7 @@ sim_df %>%
   ggplot(aes(p_null, E_pay, color = alpha)) + 
   geom_point(alpha = 0.2) + 
   geom_line(data = sim_df %>% filter(alpha == 0.05)) + 
-  facet_grid(nregions ~ method) + 
+  facet_grid(nregions ~ method + delta) + 
   scale_color_viridis_c() + 
   theme_minimal()  +
   labs(title = "Which alpha maximizes payout?", subtitle = "Line drawn at alpha = 0.05")
@@ -254,7 +273,7 @@ sim_df %>%
   ggplot(aes(p_null, E_pay, color = alpha)) + 
   geom_point(alpha = 0.2) + 
   geom_line(data = sim_df %>% filter(alpha == 0.05 & method != "p_raw")) + 
-  facet_grid(nregions ~ method) + 
+  facet_grid(nregions ~ method + delta) + 
   scale_color_viridis_c() + 
   theme_minimal()  +
   labs(title = "Which alpha maximizes payout?", subtitle = "Line drawn at alpha = 0.05")
@@ -267,17 +286,18 @@ sim_df %>%
   # geom_point(alpha = 0.2) +
   geom_line(aes(group = p_null), alpha = 0.5)  +
   # geom_line(data = sim_df %>% filter(p_null %in% c(0.025, 0.475, 0.975)), aes(group = p_null)) + 
-  facet_grid(nregions ~ method) + 
+  facet_grid(nregions ~ method + delta) + 
   scale_color_viridis_c() + 
   theme_minimal() +
   labs(title = "Which alpha maximizes payout?", subtitle = "alpha = 0.02 ~ 0.04")
 ```
+
 ```{r}
 sim_df %>%
   # filter(p_null %in% c(0.475, 0.525)) %>%
-  group_by(alpha, nregions, method) %>%
+  group_by(alpha, nregions, method, delta) %>%
   summarize(mean = mean(E_pay))  %>%
-  group_by(nregions, method) %>%
+  group_by(nregions, method, delta) %>%
   slice_max(mean)
 ```
 
@@ -290,7 +310,7 @@ sim_df %>%
   geom_point(alpha = 0.2) + 
   geom_line(data = sim_df %>% filter(p_null == 0.475)) +
   geom_abline(aes(intercept = 0, slope = 1)) + 
-  facet_grid(. ~ method) + 
+  facet_grid(. ~ method + delta) + 
   scale_color_viridis_c() + 
   theme_minimal() + 
   labs(title = "FDR under B-H and raw strategy", subtitle = "Diagonal line is alpha = FDR, colored line at P(null) = 0.5")
@@ -303,7 +323,7 @@ sim_df %>%
   geom_point(aes(color = p_null), alpha = 0.2) + 
   geom_vline(aes(xintercept = 0.05)) +
   geom_hline(aes(yintercept = 0.8)) +
-  facet_grid(nregions ~ method) +
+  facet_grid(nregions ~ method + delta) +
   scale_color_viridis_c() + 
   theme_minimal() +
   labs(title="Power is higher without correction", subtitle = "A bunch of NA's for when P(null) is high")
@@ -376,7 +396,7 @@ stimuli_alpha_df <- expand.grid(alpha = seq(from = 0.01, to = 0.5, by = 0.01)) %
   # geom_point(alpha = 0.2) +
   geom_point()  +
   # geom_line(data = sim_df %>% filter(p_null %in% c(0.025, 0.475, 0.975)), aes(group = p_null)) + 
-  facet_grid(nregions ~ method) + 
+  facet_grid(nregions ~ method + delta) + 
   scale_color_viridis_c() + 
   theme_minimal() +
   labs(title = "Simulation results")

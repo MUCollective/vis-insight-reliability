@@ -220,7 +220,7 @@ options <- furrr_options(seed = 123)
 
 
 (sim_df <- expand.grid(
-    alpha = seq(from = 0.01, to = 0.5, by = 0.01),
+    alpha = seq(from = 0, to = 0.1, by = 0.001),
     p_null = ppoints(20)
   ) %>%
     split(1:nrow(.)) %>%

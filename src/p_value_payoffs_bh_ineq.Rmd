@@ -295,10 +295,18 @@ sim_df %>%
 ```{r}
 sim_df %>%
   # filter(p_null %in% c(0.475, 0.525)) %>%
-  group_by(alpha, nregions, method, delta) %>%
-  summarize(mean = mean(E_pay))  %>%
+  group_by(alpha, nregions, method, delta) %>% # average out P(null)
+  summarize(E_pay_mean = mean(E_pay), .groups = "drop")  %>% 
   group_by(nregions, method, delta) %>%
-  slice_max(mean)
+  slice_max(E_pay_mean)  %>% 
+  ggplot(aes(x = factor(delta), y = alpha)) + 
+  geom_point() + 
+  geom_segment(aes(xend = factor(delta), yend = 0)) + 
+  geom_hline(aes(yintercept = 0.05), color = "slategray3") +
+  facet_grid(nregions ~ method) + 
+  theme_minimal() + 
+  labs(title = "The alphas that maximizes E[payout] for three (delta=mu/sigma)'s and nregions",
+       subtitle = "Averaged over a uniform P(null) distribution")
 ```
 
 
@@ -340,22 +348,23 @@ data.sim.8reg <- readRDS(file = "../data/simulated_data_8regions.rds")
   list("12" = data.sim.12reg, "8" = data.sim.8reg), 
   .id = "nregions") %>%
   select(-c(region_idx, effect_size, population, p_h1)) %>%
-  mutate(nregions = as.numeric(nregions))
+  mutate(nregions = as.numeric(nregions),
+         delta = mean/sd)
 )
 ```
 
 ```{r}
 stimuli_fn <- function(df_stimuli, alpha){
   df_stimuli %>%
+    group_by(nregions, trial, delta) %>%
     mutate(p_raw = 
              map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) %>%
-    group_by(nregions, trial) %>%
     mutate(p_bh = p.adjust(p_raw, "BH")) %>%
     select(-data) %>%
     pivot_longer(starts_with("p_"), names_to = "method", values_to = "p") %>%
     mutate(reject = p < alpha,
            true = mu == 0) %>%
-    group_by(trial, nregions, method) %>%
+    group_by(trial, nregions, method, delta) %>%
     summarize( tp = sum(!true & reject),
                fp = sum(true & reject),
                tn = sum(true & !reject),
@@ -364,7 +373,7 @@ stimuli_fn <- function(df_stimuli, alpha){
     mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
            pay = (tp - 19 * fp + tn - fn) * 1,
            power = (tp)/(tp + fn)) %>% # this produces NA's; set to 1?
-    group_by(nregions, method) %>%
+    group_by(nregions, method, delta) %>%
     summarize(E_pay = mean(pay), 
               E_fdr = mean(fdr), 
               power = mean(power), .groups = "drop")
@@ -373,7 +382,7 @@ stimuli_fn <- function(df_stimuli, alpha){
 ```
 
 ```{r}
-stimuli_alpha_df <- expand.grid(alpha = seq(from = 0.01, to = 0.5, by = 0.01)) %>%
+stimuli_alpha_df <- expand.grid(alpha = seq(from = 0.001, to = 0.1, by = 0.001)) %>%
   split(1:nrow(.)) %>%
   map_dfr(~ cbind(.x, stimuli_fn(df_stimuli, .$alpha), row.names = NULL))
 ```

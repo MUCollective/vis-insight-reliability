@@ -33,12 +33,16 @@ Executive summary:
 alpha <- 0.05    # not using in simulation
 K <- 20          # number of data points in a hypothesis/region
 
-# ACHTUNG: mu/sd is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli, picking the average here
+# ACHTUNG: mu/sigma is c(1.2/3, 1.5/2.5, 1.6/2) in stimuli, picking the average here
+# TODO: fix mu/sigma
 # mu <- 1.5        # sample mean in a hypothesis/region
 # sigma <- 2.5     
 
 p_null <- 0.5    # the bane of my existance 
-n_iter <- 5000   # number of iterations in simulation
+n_iter <- 100   # number of iterations in simulation
+alphas <- seq(from = 0.001, to = 0.1, by = 0.001)
+p_nulls <- ppoints(10)
+fp_penalty <- 19
 ```
 
 ## p-value PDF, CDF, invCDF defs
@@ -53,8 +57,6 @@ n_iter <- 5000   # number of iterations in simulation
 f_p <- function(x, mu, sigma, K) {
   dnorm(qnorm(1 - x) - sqrt(K) * mu / sigma) / dnorm(qnorm(1 - x))
 }
-
-
 
 # CDF
 F_p <- function(x, mu, sigma, K) {
@@ -88,15 +90,16 @@ We can get the expected number of selections under B-H with a few simulation ite
 
 
 ```{r warning = FALSE}
- (df <-
-    expand.grid(
-      nregions = c(8, 12),
-      iter = 1:n_iter,
-      delta = c(0.4, 0.6, 0.8)
-    ) %>%
-    mutate(mu0 = case_when( delta == 0.4 ~ 1.2,
-      delta == 0.6 ~ 1.5,
-      delta == 0.8 ~ 1.6)) %>%
+set.seed(32)
+
+(df <-
+  expand_grid(nregions = c(8, 12),
+    iter = 1:n_iter) %>%
+    split(1:nrow(.)) %>%
+    map_dfr(~ bind_cols(.,
+                        tibble(mu0 = c(0.9, 1.2, 1.5),
+                               sigma = c(3, 8/3, 2.5)))) %>%
+    mutate(delta = mu0 / sigma) %>%
     uncount(nregions, .remove = FALSE, .id = "panel") %>%
     group_by(iter, nregions, delta) %>%
     mutate(
@@ -118,25 +121,26 @@ We can get the expected number of selections under B-H with a few simulation ite
                .groups = "drop_last") %>%
     mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
            pay = (tp - 19 * fp + tn - fn) * 1,
-           power = (tp)/(tp + fn)) # this produces NA's; set to 1?
+           ineq = tp - 19 * fp -tn + fn,
+           power = (tp)/(tp + fn)) # this produces NA's
  )
 ```
 
 ```{r}
-df %>% 
-  group_by(method) %>%
-  summarize(mean(fdr))
+# df %>% 
+#   group_by(method) %>%
+#   summarize(mean(fdr))
 ```
 
 
 Once we have the distribution of # of rejections B-H says we should make, we can take the average and get the expected value for number of selections. 
 
 ```{r}
-(expected_nselect <-
-   df %>%
-   group_by(method, nregions) %>%
-   summarise(E_nselect = mean(tp + fp), .groups = "drop")
-)
+# (expected_nselect <-
+#    df %>%
+#    group_by(method, nregions) %>%
+#    summarise(E_nselect = mean(tp + fp), .groups = "drop")
+# )
 ```
 
 
@@ -171,6 +175,7 @@ df %>%
   group_by(method, nregions, delta) %>%
   summarize(E_pay = mean(pay), 
             E_fdr = mean(fdr), 
+            E_ineq = mean(ineq),
             power = mean(power), .groups = "drop")
 ```
 
@@ -186,15 +191,14 @@ This is the same code as above
 
 ```{r}
 finding_payout <- function(alpha, p_null){
-  df <-
-    expand.grid(
-      nregions = c(8, 12),
-      iter = 1:n_iter,
-      delta = c(0.4, 0.6, 0.8)
-    ) %>%
-    mutate(mu0 = case_when( delta == 0.4 ~ 1.2,
-      delta == 0.6 ~ 1.5,
-      delta == 0.8 ~ 1.6)) %>%
+  df <- 
+    expand_grid(nregions = c(8, 12),
+                iter = 1:n_iter) %>%
+    split(1:nrow(.)) %>%
+    map_dfr(~ bind_cols(.,
+                        tibble(mu0 = c(0.9, 1.2, 1.5),
+                               sigma = c(3, 8/3, 2.5)))) %>%
+    mutate(delta = mu0 / sigma) %>%
     uncount(nregions, .remove = FALSE, .id = "panel") %>%
     group_by(iter, nregions, delta) %>%
     mutate(
@@ -215,7 +219,8 @@ finding_payout <- function(alpha, p_null){
                fn = sum(!true & !reject), 
                .groups = "drop_last") %>%
     mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
-           pay = (tp - 19 * fp + tn - fn) * 1,
+           pay = (tp - fp_penalty * fp + tn - fn) * 1,
+           ineq = tp - fp_penalty * fp - tn + fn,
            power = (tp)/(tp + fn)) # this produces NA's; set to 1?
  
   
@@ -223,20 +228,24 @@ df %>%
   group_by(method, nregions, delta) %>%
   summarize(E_pay = mean(pay), 
             E_fdr = mean(fdr), 
+            E_ineq = mean(ineq),
             power = mean(power), .groups = "drop")
 }
 
 ```
 
+
+### Run
+
 setting seed https://davisvaughan.github.io/furrr/articles/articles/gotchas.html#argument-evaluation
 
 ```{r, eval= FALSE}
 plan(multisession, workers = 13)
-options <- furrr_options(seed = 123)
+options <- furrr_options(seed = 32)
 
 (sim_df <- expand.grid(
-    alpha = seq(from = 0.001, to = 0.1, by = 0.001),
-    p_null = ppoints(20)
+    alpha = alphas,
+    p_null = p_nulls
   ) %>%
     split(1:nrow(.)) %>%
     future_map_dfr(~cbind(.x, finding_payout(.$alpha, .$p_null), row.names = NULL), .options = options)
@@ -244,7 +253,8 @@ options <- furrr_options(seed = 123)
 
 beep()
 # saveRDS(sim_df, "sim_n5000_alpha_pnull.rds")
-saveRDS(sim_df, "sim_n5000_alpha_pnull_delta.rds")
+# saveRDS(sim_df, "sim_n5000_alpha_pnull_delta.rds")
+# saveRDS(sim_df, "sim_n5000_alpha_pnull_delta_seed32.rds")
 ```
 
 
@@ -254,6 +264,26 @@ sim_df <- readRDS("sim_n5000_alpha_pnull_delta.rds")
 ```
 
 ### Results
+
+
+See where "Rejecting" gives greater payout than "not rejecting" on the $\alpha$ scale
+
+```{r}
+sim_df %>%
+  group_by(nregions, method, delta, alpha) %>%
+  summarize(E_ineq = mean(E_ineq)) %>%
+  ggplot(aes(alpha, E_ineq)) + 
+  geom_point(aes(color = delta)) + 
+  theme_minimal() + 
+  scale_color_viridis_c() +
+  facet_grid(nregions ~ method) +
+  geom_hline(aes(yintercept = 0))
+```
+
+
+
+The rest
+
 
 ```{r}
 sim_df %>% 
@@ -293,12 +323,36 @@ sim_df %>%
 ```
 
 ```{r}
+sim_df %>% 
+  group_by(nregions, delta, method, alpha) %>%
+  summarize(E_pay = mean(E_pay)) %>%
+  ggplot(aes(alpha, E_pay, color = method)) + 
+  geom_point(aes(group = p_null), alpha = 0.5)  +
+  facet_grid(nregions ~ delta) + 
+  scale_color_viridis_d() + 
+  theme_minimal()  + 
+  labs(title = "At which alpha is B-H better than RAW")
+```
+```{r}
+
+sim_df %>%
+  group_by(alpha, nregions, method, delta) %>% # average out P(null)
+  summarize(E_pay_mean = mean(E_pay), .groups = "drop") %>%
+ ggplot(aes(x = alpha, y = E_pay_mean, color = factor(delta))) + 
+  geom_point() + 
+  facet_grid(nregions ~ method) + 
+  scale_color_viridis_d() + 
+  theme_minimal() 
+
+```
+
+```{r}
 sim_df %>%
   # filter(p_null %in% c(0.475, 0.525)) %>%
   group_by(alpha, nregions, method, delta) %>% # average out P(null)
   summarize(E_pay_mean = mean(E_pay), .groups = "drop")  %>% 
   group_by(nregions, method, delta) %>%
-  slice_max(E_pay_mean)  %>% 
+  slice_max(E_pay_mean)  %>%
   ggplot(aes(x = factor(delta), y = alpha)) + 
   geom_point() + 
   geom_segment(aes(xend = factor(delta), yend = 0)) + 
@@ -382,7 +436,7 @@ stimuli_fn <- function(df_stimuli, alpha){
 ```
 
 ```{r}
-stimuli_alpha_df <- expand.grid(alpha = seq(from = 0.001, to = 0.1, by = 0.001)) %>%
+stimuli_alpha_df <- expand.grid(alpha = alphas) %>%
   split(1:nrow(.)) %>%
   map_dfr(~ cbind(.x, stimuli_fn(df_stimuli, .$alpha), row.names = NULL))
 ```
@@ -391,7 +445,7 @@ stimuli_alpha_df <- expand.grid(alpha = seq(from = 0.001, to = 0.1, by = 0.001))
 (p1 <- stimuli_alpha_df %>%
   ggplot(aes(alpha, E_pay)) + 
   geom_point() + 
-  facet_grid(nregions ~ method) +
+  facet_grid(nregions ~ method + delta) +
   scale_color_viridis_c() + 
   theme_minimal() +
   labs(title = "t-test on experiment stimuli", subtitle = "P(null) = 0.5")
@@ -413,6 +467,11 @@ stimuli_alpha_df <- expand.grid(alpha = seq(from = 0.001, to = 0.1, by = 0.001))
 ```
 
 ```{r}
-p1 + p2 
+# p1 + p2 
+  bind_rows("stimuli" = stimuli_alpha_df, "simulated" = sim_df %>% filter(p_null < 0.55 & p_null > 0.45), .id = "source") %>%
+  ggplot(aes(x = alpha, y = E_pay)) + 
+  geom_point(aes(color = source), alpha = 0.3)  + 
+  facet_grid(nregions ~ method + delta) + 
+  theme_minimal()
 ```
 

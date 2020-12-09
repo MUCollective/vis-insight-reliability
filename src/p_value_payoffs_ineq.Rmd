@@ -254,6 +254,15 @@ fp_penalty_bonf <- function(P_null, alpha, n){
 ```
 
 
+### Average penalty over P(null)
+
+```{r}
+map_dbl(ppoints(10), ~ fp_penalty(., 0.1)) %>% mean()
+# [1] 19.62325
+map_dbl(ppoints(20), ~ fp_penalty(., 0.17)) %>% mean()
+# [1] 18.40792
+```
+
 
 
 ```{r}

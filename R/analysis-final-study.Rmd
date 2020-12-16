@@ -81,6 +81,22 @@ df %>%
   ) %>%
   mutate(fdr = fp / (tp + fp))
 ```
+
+### Visualising the average number of regions selected by participants
+
+We explore if there are differences in the number of regions that are selected by the participants when the possible number of testable hypotheses changes (i.e. 8 or 12). We want to make sure that average participants do not resort to a strategy where they select a fixed number of regions regardless of the potential number of testable hypotheses.
+
+```{r}
+df %>%
+  mutate(
+    selected = tp + fp,
+    nregions = factor(nregions, levels = c("8", "12"))
+  ) %>%
+  ggplot(aes(x = trial, y = selected, group = nregions, colour = nregions)) +
+  geom_smooth(method = lm, formula = y ~ x)
+```
+
+
 ### Probability of TP/TN/FP/FN in each condition
 
 In the following graph we show the mean values of TP, TN, FP and FN in each uncertainty visualization condition, and separated by the number of graphs that we show each participant.
@@ -203,7 +219,9 @@ test.statistics <- predicted.fit %>%
   ) %>%
   group_by(.draw, condition, .category, ntrials) %>%
   summarise( .prediction = mean(.prediction) )
+```
 
+```{r predicted-draws-pp-check, eval = FALSE, fig.width = 6, fig.height = 3}
 test.statistics %>%
   filter(ntrials == 12) %>%
   ggplot(aes(.prediction)) +
@@ -236,6 +254,7 @@ draws.fit <- data_grid(df, condition, nesting(ntrials, nregions), adj_trial_id) 
   )
 ```
 
+
 ### RQ 1: do users implicitly perform some form of multiple comparisons correction?
 
 If users are not performing any form of multiple comparisons correction, then intuitively, on average, a participant in our study will have more number of False positives when presented with 12 graphs as opposed to 8 graphs (the two within person conditions). More directly, we can compare the False Discovery rate when $nregions = 8$ vs when $nregions = 12$. If the FDR is constant or less for $nregions = 12$ compared to $nregions = 8$, then it implies that participants are performing some form of multiple comparisons correction.
@@ -257,7 +276,11 @@ data.fp_rate <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) 
   ) %>%
   rename(ntrials = nregions) %>%
   group_by(ntrials) %>%
-  summarise(uncorrected_fp = mean(uncorrected_fp) / mean(selected), .groups = "drop")
+  summarise(fdr = mean(uncorrected_fp) / mean(selected), .groups = "drop")
+
+data.bh.fp_rate <- pivot_wider(df.bh.mean, names_from = .category, values_from = .value) %>%
+  group_by(ntrials) %>%
+  summarise(fdr = FP / (TP + FP), .groups = "drop")
 ```
 
 In the figure below, we see that, on average, the FDR decreases for participants when presented with more graphs. This suggests that they are likely performing some form of implicit multiple comparisons correction. The FDR for $ngraphs = 8$ is 14.5 and for $ngraphs = 12$ is 0.1.
@@ -271,6 +294,7 @@ p1.fdr <- draws.fit %>%
   ggplot(aes(x = fp_rate, y = factor(ntrials))) +
   geom_halfeyeh(.width = c(.95, .8, .5)) +
   geom_text(data = data.fp_rate, aes(x = uncorrected_fp, y = factor(ntrials)), label = "|", size = 8) +
+  geom_text(data = data.bh.fp_rate, aes(x = fdr, y = factor(ntrials)), label = "|", size = 8) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
   labs(x = "False Discovery Rate", y = "Number of graphs shown") +
   scale_x_continuous(limits = c(0, 0.2), breaks = seq(-0.2, 0.2, by = 0.04)) +
@@ -300,6 +324,18 @@ p2.fdr <- draws.fit %>%
 
 cowplot::plot_grid(p1.fdr, p2.fdr, rel_widths = c(6.5, 3.5))
 ```
+
+
+```{r}
+draws.fit %>%
+  group_by(ntrials, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  compare_levels(variable = fp_rate, by = ntrials) %>%
+  median_qi(fp_rate)
+```
+
 
 We see that the decrease in the False Discovery Rate is, on average, a magnitude of 4 percentage points, with a 95% credible interval of [0.033, 0.051]. This implies there is almost a 30% reduction in the FDR.
 
@@ -422,6 +458,9 @@ draws.ci %>%
   summarise(.value = mean(.value), .groups = "drop") %>%
   median_qi(.value)
 ```
+```{r}
+
+```
 
 
 ```{r, 08-probs-vis-learning, fig.height = 4, fig.width = 10}
@@ -445,13 +484,14 @@ p1.ci <- draws.ci %>%
   )
 
 draws.ci.sample <- draws.ci %>%
-  group_by(trial_id) %>%
-  sample_n(., 40) %>%
-  ungroup()
+  group_by(.draw) %>%
+  summarise(trial_id = list(trial_id), .value = list(.value)) %>%
+  sample_n(500) %>%
+  unnest(cols = c(trial_id, .value))
 
 p2.ci <- draws.ci.sample %>%
   ggplot() +
-  geom_point(aes(x = trial_id, y = .value), alpha = 0.2, color = "#5B75BD") + #"#6ECCB0"
+  geom_line(aes(x = trial_id, y = .value, group = .draw), alpha = 0.1, color = "#5B75BD") + #"#6ECCB0"
   theme_minimal() +
   ylim(c(0, 0.35)) +
   theme(
@@ -463,7 +503,7 @@ p2.ci <- draws.ci.sample %>%
   )
 
 p3.ci <- draws.ci.sample %>%
-  group_by(condition, .draw, .category) %>%
+  group_by(.draw) %>%
   summarise(.value = mean(.value), .groups = "drop") %>%
   ggplot() +
   geom_dotplot(aes(x = .value), binwidth = 0.0025, stackratio = 1.4, fill = "#3182bd", color = NA) + 
@@ -479,7 +519,7 @@ p3.ci <- draws.ci.sample %>%
   )
 
 p4.ci <- draws.ci %>%
-  group_by(condition, .draw, .category) %>%
+  group_by(.draw) %>%
   summarise(.value = mean(.value), .groups = "drop") %>%
   ggplot() +
   geom_halfeyeh(aes(x = .value, y = NA)) +

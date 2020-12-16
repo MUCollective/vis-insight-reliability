@@ -18,11 +18,15 @@ library(purrr)
 library(tidyr)
 library(gganimate)
 library(ggrepel)
+library(modelr)
+library(glue)
 ```
 
 ## Analytical payoff expectations
 
-**NOTE: There is an error in here somewhere as it does not currently match the simulated output**
+
+**ACHTUNG: The analytical solutions (plotted as lines below) don't match the simulated output**
+
 
 Here we'll try to derive what the expected payoff is given a particular strategy and the probability that the null is true. "strategies" in this case refer to choosing to reject at a given alpha level and p value correction (such as "raw"---no correction---Bonferronni, Benjamini-Hochberg, etc).
 
@@ -81,7 +85,13 @@ $$
 \end{align}
 $$
 
-When the null is false with a sample size of $K$, we have the following density function ($f_p$) and distribution function ($F_p$) for the distribution of the p value when the null is false, based on H. M. James Hung, Robert T. O'Neill, Peter Bauer, and Karl Kohne. The Behavior of the P-Value When the Alternative Hypothesis Is True. _Biometrics_ 53, no. 1 (1997): 11-22. [doi:10.2307/2533093](http://doi.org/10.2307/2533093).
+When the null is false with a sample size of $K$, we have the following density function ($f_p$) and distribution function ($F_p$) for the distribution of the p value when the null is false, based on equations 2.1 and 2.2 in H. M. James Hung, Robert T. O'Neill, Peter Bauer, and Karl Kohne. The Behavior of the P-Value When the Alternative Hypothesis Is True. _Biometrics_ 53, no. 1 (1997): 11-22. [doi:10.2307/2533093](http://doi.org/10.2307/2533093).
+
+
+More details:
+
+- $Y$ the response variable follows a normal distribution 
+- $\delta = \frac{\mu}{\sigma}$ is the test parameter in the alternative hypotheses (??)
 
 $$
 \begin{align}
@@ -116,16 +126,16 @@ Thus the expected payoff for the "raw" strategy is:
 $$
 \begin{align}
   E\left[payoff\right|n,strategy = raw] 
-    &= 
+    =& 
       1000E\left[n_{greater\land reject}\right] 
       - 19000E\left[n_{\neg greater \land reject}\right] 
       - 1000E\left[n_{greater \land \neg reject}\right] 
       + 1000E\left[n_{\neg greater \land \neg reject}\right]  \\
-   &=
-      1000nF_p(\alpha|\mu,\sigma,K)P(\neg null)
-      - 19000n\alpha P(null) 
-      - 1000n\left(1 - F_p(\alpha|\mu,\sigma,K)\right)P(\neg null)
-      + 1000n(1 - \alpha) P(null)  \\
+   =&
+      1000nF_p(\alpha|\mu,\sigma,K)P(\neg null)\\
+      &- 19000n\alpha P(null) \\
+      &- 1000n\left(1 - F_p(\alpha|\mu,\sigma,K)\right)P(\neg null)\\
+      &+ 1000n(1 - \alpha) P(null)  \\
 \end{align}
 $$
 
@@ -147,70 +157,189 @@ E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
 }
 ```
 
+### Understanding fp and Fp
 
 ```{r}
-tibble(p_null = 0) %>%
-  ggplot(aes(x = p_null)) + 
-  stat_function(fun = ~ E_payoff_raw(0.05, n_obs, .x, 1, 1, n_obs)) + 
-  xlim(0, 1)
+expand.grid(p = seq(from = 0.01, to = 0.99, length.out = 100),
+            # K = c(15, 30, 60, 80)) %>%
+       K = seq.int(from = 10, by = 5, length.out = 20)) %>%
+  mutate(fp = f_p(p, 1,3,K)) %>%
+  ggplot(aes(p,fp, color = K)) + 
+  geom_line(aes(group = K)) + 
+  ylab("Density of p") + 
+  labs(title="Behavior of p-value when alt H is true", 
+       subtitle = "mu = 1, sigma = 3") + 
+  scale_color_viridis_c() +
+  scale_x_continuous(trans = "log2")
+```
+```{r}
+expand.grid(p = seq(from = 0.01, to = 0.99, length.out = 100),
+       sigma = c(8, 4, 3, 1)) %>%
+  mutate(fp = f_p(p, 1,sigma, 80)) %>%
+  ggplot(aes(p,fp, color = sigma)) + 
+  geom_line(aes(group = sigma)) + 
+  ylab("Density of p") + 
+  labs(title="Behavior of p-value when alt H is true") +
+  scale_color_viridis_c() 
+```
+
+
+CDF for $p$-values when the alternative hypothesis is true, a function of $\alpha$ level and sample size
+
+```{r}
+tibble(alpha = seq(from = 0.01, to = 0.3, length.out = 20),
+      K = 6:25) %>%
+  data_grid(alpha, K) %>%
+  mutate(Fp = F_p(alpha, 1,1,K)) %>%
+  ggplot(aes(alpha, K)) + 
+  geom_contour_filled(aes(z = Fp))  +
+  labs(title = "alpha and power")
 ```
 
 
 
+### Expected payoff ~ P(null) and alpha
+
+TODO: might be fun to plot results on here
+
+```{r}
+
+tibble(pnull = seq(from=0.05, to=0.95, length.out = 20)) %>%
+  mutate(alpha = pnull) %>%
+  data_grid(pnull, alpha) %>%
+  mutate(payoff = E_payoff_raw(alpha, 10, pnull, 1,1,20)) %>%
+  ggplot(aes(alpha, pnull)) + 
+  geom_contour_filled(aes(z = payoff)) 
+
+```
+
+
+
+## FP penalty: function of Pnull and alpha
+
+
+$$
+\begin{align}
+dE[n_{TN}] -  b E[n_{FN}] &< cE[n_{TP}] - a E[n_{FP}] \tag*{setting b, c, d = 1 because we can}\\
+E[n_{TN}] -  E[n_{FN}] &< E[n_{TP}] - a E[n_{FP}]\\
+n(1-\alpha) P(null) - n(1 - F_p(\alpha))( 1- P(null)) &< nF_p(\alpha)(1 - P(null)) - a n \alpha P(null)\\
+(1-\alpha) P(null) - (1 - F_p(\alpha))( 1- P(null)) &< F_p(\alpha)(1 - P(null)) - a \alpha P(null)\\
+\end{align}
+$$
+
+
+$$
+\begin{align}
+a\alpha P(null) &= F_p(\alpha)(1 - P(null)) + (1 - F_p(\alpha))( 1- P(null)) - (1-\alpha) P(null)\\
+a &= \frac{1 - P(null) + (\alpha - 1) P(null)}{\alpha P(null)}\\
+a &= \frac{1 + (\alpha - 2) P(null)}{\alpha P(null)}\\
+\end{align}
+$$
+
+
+
+```{r}
+fp_penalty <- function(P_null, alpha){
+  n_obs <- 20 # should be the sample size, not number of regions/panels/hypotheses
+  
+  # ((1- alpha) - (1 - 2 * F_p(alpha, mu = 1, sigma = 1, K = n_obs)) * (1 - P_null)) / (alpha * P_null)
+  # ((1- alpha) * P_null + (- 1 + 2 * F_p(alpha, mu = 1, sigma = 1, K = n_obs)) * (1 - P_null)) / (alpha * P_null)
+  (1 + (alpha - 2) * P_null)/(alpha * P_null)
+}
+
+fp_penalty_bonf <- function(P_null, alpha, n){
+  (1 + (alpha/n - 2) * P_null)/(alpha/n * P_null)
+}
+
+```
+
+
+### Average penalty over P(null)
+
+```{r}
+map_dbl(ppoints(10), ~ fp_penalty(., 0.1)) %>% mean()
+# [1] 19.62325
+map_dbl(ppoints(20), ~ fp_penalty(., 0.17)) %>% mean()
+# [1] 18.40792
+```
+
+
+
+```{r}
+tibble(P_null = 0) %>%
+  ggplot(aes(x = P_null)) + 
+  stat_function(fun = ~ fp_penalty(.x, alpha = 0.05)) + 
+  xlim(c(0, 1)) + 
+  ylab("penalty")
+  
+expand_grid(alpha = seq(from=0.05, to=0.95, length.out = 100),
+            P_null = seq(from = 0.3, length.out = 5, by = 0.1)) %>%
+  mutate(penalty = fp_penalty(P_null, alpha)) %>%
+  ggplot(aes(x = alpha, y =penalty) )+ 
+  geom_line(aes(color = penalty > 0)) + 
+  geom_hline(aes(yintercept = 19)) + 
+  geom_text(aes(0,19,label = 19, vjust = 1), size = 3) + 
+  facet_grid(. ~ P_null, labeller = label_both) 
+```
+
+Grid of alpha and P(null)
+
+```{r}
+tibble(pnull = seq(from=0.05, to=0.95, length.out = 20)) %>%
+  mutate(alpha = pnull) %>%
+  data_grid(pnull, alpha) %>%
+  mutate(penalty = fp_penalty(pnull, alpha)) %>%
+  ggplot(aes(pnull, alpha)) + 
+  geom_contour_filled(aes(z = (penalty))) + 
+  scale_color_viridis_c()
+```
+
+### Inverse: Effective alpha from penalty
+
+Take the inverse of FP penalty function, setting penalty = 19, P(null) = varies
+
+https://stackoverflow.com/questions/10081479/solving-for-the-inverse-of-a-function-in-r
+
+The alpha level implied by our incentives is around 0.14 when P(null) is around 0.5; there is variation since we sampled P(null) from a binomial.
+
+```{r}
+# inverse <- function (f, lower = -100, upper = 100) {
+#    function(y) uniroot((function (x) f(x) - y), lower = lower, upper = upper)$root
+# }
+# fp_penalty_inv <- inverse(function(alpha) fp_penalty(P_null = 0.5, alpha), 0, 1 )
+
+fp_penalty_inv <- function(incentive, P_null, l = 0.01, u = 0.99) {
+  uniroot(function(alpha) fp_penalty(P_null, alpha) - incentive, lower = l, upper = u)$root
+}
+
+fp_penalty_inv(19, P_null = 0.25)
+
+seq(from = 0.1, to = 0.4, length.out = 10) %>%
+  map_dbl(~ fp_penalty_inv(19, .x))
+
+tibble(pnull = seq(from = 0.1, to = 0.4, length.out = 100) ) %>%
+  mutate(alpha_eff = map_dbl(pnull, ~ fp_penalty_inv(19, .x))) %>%
+  ggplot(aes(pnull, alpha_eff)) + 
+  geom_point() +
+  # geom_hline(aes(yintercept = 0.1428061), color = "red")  +
+  geom_hline(aes(yintercept = 0.05), color = "yellow")
+
+```
+
+
+
+--------
 
 ## Simulations of payoffs
 
 Set up the simulation:
 
 ```{r}
-alpha = .05
-n_panels = 10
+alpha = 0.1428061
+n_panels = 8
 you_pick_two <- 2
-n_obs = 10
+n_obs = 20
 k = 5000
-```
-
-### NEW: Decision making threshold inequality
-
-- The rational user will make a selection (reject the null) if the reward of selecting is greater than not selecting
-- Other side of the decision: the rational user will not make a selection (not reject the null) if the reward of not selecting is greater than selecting. The inequality for "reward if not rejecting the null < reward if rejecting the null"
-
-$$
-\begin{align}
-dE[n_{TN}] - b E[n_{FN}] &< cE[n_{TP}] - a E[n_{FP}] \tag*{setting c, d = 1 because we can}\\
-E[n_{TN}] - b E[n_{FN}] &< E[n_{TP}] - a E[n_{FP}]\\
-
- &< nP(p \ge \alpha|strategy,null)P(null)
-\end{align}
-$$
-
-where $a, b$ are penalties for making FP, FN mistakes
-
-$$
-\begin{align}
-[1 - 2 F_p(\alpha)] [1 - P(null)] &= [b ( 1 - \alpha) - a \alpha] P(null)\\
- a &= \frac{b (1-\alpha) - [1 - 2 F_p(\alpha)] [1 - P(null)] }{\alpha P(null) }
-\end{align}
-$$
-
-
-
-```{r}
-fp_penalty <- function(P_null){
-  n_obs <- 1
-  alpha <- 0.5
-  
-  ((1- alpha) - (1 - 2 * F_p(alpha, mu = 1, sigma = 1, K = n_obs)) * (1 - P_null)) / (alpha * P_null)
-}
-
-fp_penalty(0.5)
-
-tibble(P_null = 0) %>%
-  ggplot(aes(x = P_null)) + 
-  stat_function(fun = ~ fp_penalty(.x)) + 
-  xlim(c(0, 1)) + 
-  ylab("penalty")
-  
 ```
 
 ### The simulation
@@ -293,9 +422,9 @@ Let's verify that the multiple comparisons procedures do control FDR (false disc
 rates_df %>%
   ggplot(aes(x = prior_prob_null, y = fdr, color = p_type)) +
   geom_line() +
-  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_hline(yintercept = alpha, linetype = "dashed") +
   geom_label_repel(aes(label = p_type), data = . %>% group_by(p_type) %>% slice(n())) +
-  coord_cartesian(ylim = c(0, .1))
+  coord_cartesian(ylim = c(0, alpha + 0.4))
 ```
 
 Only Bonferroni controls familywise error rate (FWER):
@@ -304,29 +433,96 @@ Only Bonferroni controls familywise error rate (FWER):
 rates_df %>%
   ggplot(aes(x = prior_prob_null, y = fwer, color = p_type)) +
   geom_line() +
-  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_hline(yintercept = alpha, linetype = "dashed") +
   geom_label_repel(aes(label = p_type), data = . %>% group_by(p_type) %>% slice(n())) +
-  coord_cartesian(ylim = c(0, .2))
+  coord_cartesian(ylim = c(0, alpha  +0.4))
 ```
 
-### Payoffs
+### Plotting payoffs
 
 Mean payoff by incentive structure and p value correction type:
 
 ```{r}
+df <- read.csv("../data/final-study-cleaned.csv")
+(
+  payout_df <-df %>%
+    mutate(payout = 1000 * tp + 1000 * tn - 1000 * fn - 19000 * fp) %>%
+    mutate(prior_prob_null = (tn + fp)/nregions) %>%
+    filter(nregions == n_panels) %>%
+    select(prior_prob_null, payout) 
+) 
+
+df %>%
+  mutate(prior_prob_null = ((tn + fp)/nregions)) %>%
+  ggplot(aes(prior_prob_null)) + 
+  geom_bar() + 
+  facet_grid(. ~ nregions) +
+  NULL
+
+df %>%
+  mutate(prior_prob_null = ((tn + fp)/nregions)) %>%
+  group_by(nregions) %>%
+  summarize(mean = mean(prior_prob_null), ci = 1.96 * sd(prior_prob_null) / sqrt(n())) %>%
+  ggplot(aes(factor(nregions), mean)) +
+  geom_pointrange(aes(ymin = mean - ci, ymax = mean + ci)) +
+  labs(title = "P(null) difference")
+
+# Learning effect?
+
+df %>%
+  mutate(correct_rate = (tn + tp)/nregions) %>%
+  group_by(prolific_pid, nregions) %>%
+  summarize(begin = mean(head(correct_rate)), end = mean(tail(correct_rate))) %>%
+  select(prolific_pid, begin, end, nregions) %>%
+  pivot_longer(-c(prolific_pid, nregions)) %>%
+  ggplot(aes(x = name, y = value, group = prolific_pid)) +
+  geom_line(alpha = 0.1) + 
+  facet_grid(. ~ nregions) + 
+  ylim(c(0,1))
+
+
+# Number of things people select are about the same between nregions = 8 and 12
+
+df %>%
+  mutate(select = tp + fp) %>%
+  group_by(nregions) %>%
+  summarize(m = mean(select), ci = 1.96 * sd(select)/sqrt(n())) 
+  ggplot(aes(factor(nregions), m)) + 
+  geom_pointrange(aes(ymin = m - ci, ymax = m + ci))
+
+
+df %>%
+  mutate(any_false_rejection = fp > 0) %>%
+  group_by(prolific_pid, nregions) %>%
+  summarize(fwer = mean(any_false_rejection)) %>%
+  ggplot(aes(x = fwer)) + 
+  geom_density() +
+  facet_grid(nregions ~. ) + 
+  labs(title = "FWER")
+
+```
+
+
+
+```{r}
 rates_df %>%
   gather(payout_type, payout, mean_payout, mean_fdr_payout, mean_fwer_payout) %>%
+  filter(payout_type == "mean_payout") %>%
   filter(p_type != "p_all") %>%
-  ggplot(aes(x = prior_prob_null, y = payout, color = p_type)) +
-  geom_line() +
-  facet_wrap(~ payout_type) +
+  ggplot(aes(x = prior_prob_null, y = payout)) +
+  geom_line(aes(color = p_type)) +
+  # facet_wrap(~ payout_type) +
   stat_function(aes(color = "p_raw"), 
     fun = ~ E_payoff_raw(alpha, n = n_panels, p_null = .x, mu = 1, sigma = 1, K = n_obs), 
     linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
   stat_function(aes(color = "p_bonf"), 
     fun = ~ E_payoff_raw(alpha / n_panels, n = n_panels, p_null = .x, mu = 1, sigma = 1, K = n_obs), 
     linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
-  coord_cartesian(ylim = c(-6000, 10000))
+  geom_jitter(data = payout_df, aes(prior_prob_null, payout), alpha = 0.04) +
+  # coord_cartesian(ylim = c(-50000, 12000)) +
+  coord_cartesian(ylim = c(- 10000, 10000)) +
+  labs(title = glue("Simulated and theoretical payouts using different strategies; nregions = {n_panels}"))
+  
 ```
 
 We can see that under the incentive structure that uses all four corners of the payoff matrix (`mean_payout` column), the Benjamini-Hochberg procedure seems to do well overall.

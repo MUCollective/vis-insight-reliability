@@ -275,7 +275,7 @@ rates_df %>%
   stat_function(aes(color = "p_bonf"), 
     fun = ~ E_payoff_raw(alpha / n_panels, n = n_panels, p_null = .x, mu = 1, sigma = 1, K = n_obs), 
     linetype = "dashed", data = . %>% filter(payout_type == "mean_payout")) +
-  coord_cartesian(ylim = c(-6000, 10000))
+  coord_cartesian(ylim = c(-10000, 10000))
 ```
 
 We can see that under the incentive structure that uses all four corners of the payoff matrix (`mean_payout` column), the Benjamini-Hochberg procedure seems to do well overall.

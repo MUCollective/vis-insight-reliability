@@ -67,7 +67,7 @@ n_region = c(12, 8)
 baseline = 0
 p_h1_levels = 0.5 # c(seq(2, 8))
 # effect_sizes = c(0.2, 0.5, 0.8) We use mean and SD pairs instead
-mu_sd <- list(list(mu = 1.2, sd = 3), list(mu = 1.5, sd = 2.5), list(mu = 1.6, sd = 2))
+mu_sd <- list(list(mu = 0.9, sd = 3), list(mu = 1.2, sd = 2.67), list(mu = 1.5, sd = 2.5))
 d <- crossing( 
     trial = seq(1:n_trials),
     p_h1 = p_h1_levels,
@@ -125,46 +125,24 @@ data.sim.8reg <- readRDS(file = "../data/simulated_data_8regions.rds")
 nu = sample_size - 1
 ```
 
+## Decision making using different strategies
+Below, we compute the FDR if analyst accounted for multiple comparisons
 
 ```{r}
-## calculates the number of regions one should select on average using Benjamini-Hochberg strategy vs the raw p-value
-rbind(
-  select(data.sim.12reg, -c(effect_size, p_h1)) %>%
-    mutate(
-      p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
-      alpha = 0.05 #map(trial, ~ c(0.1, 0.05, 0.01))
-    ) %>%
-    unnest(cols = c(alpha)) %>%
-    group_by(trial, alpha, sd) %>%
-    arrange(alpha, trial, p_value) %>%
-    mutate(
-      rank = 1:n_region[[1]],
-      critical_value = rank/n_region[[1]] * 0.05,
-      bh_profit = ifelse(p_value < critical_value, TRUE, FALSE),
-      raw_profit = ifelse(p_value < alpha, TRUE, FALSE)
-    ) %>%
-    summarise(bh_select = sum(bh_profit), raw_select = sum(raw_profit)) %>%
-    ungroup() %>%
-    mean_qi(bh_select, raw_select),
-  select(data.sim.8reg, -c(effect_size, p_h1) ) %>%
-    mutate(
-      p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
-      alpha = 0.05 #map(trial, ~ c(0.1, 0.05, 0.01))
-    ) %>%
-    unnest(cols = c(alpha)) %>%
-    group_by(trial, alpha, sd) %>%
-    arrange(alpha, trial, p_value) %>%
-    mutate(
-      rank = 1:n_region[[2]],
-      critical_value = rank/n_region[[2]] * 0.05,
-      bh_profit = ifelse(p_value < critical_value, TRUE, FALSE),
-      raw_profit = ifelse(p_value < alpha, TRUE, FALSE)
-    ) %>%
-    summarise(bh_select = sum(bh_profit), raw_select = sum(raw_profit)) %>%
-    ungroup() %>%
-    mean_qi(bh_select, raw_select)
-)
+df.bh <- bind_rows(list("8" = data.sim.8reg, "12" = data.sim.12reg), .id = "nregions") %>%
+  select(-c(region_idx, effect_size, population, p_h1)) %>%
+  mutate(nregions = as.numeric(nregions), delta = mean/sd) %>%
+  mutate(
+    p_raw = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
+    p_bh = p.adjust(p_raw, "BH")
+  ) %>%
+  select(-data) %>%
+  pivot_longer(starts_with("p_"), names_to = "method", values_to = "p") %>%
+  mutate(reject = p < alpha, true = mu == 0)
+
+write.csv(df.bh, "../data/final-study-bh.csv", row.names = FALSE)
 ```
+
 
 
 ### Bootstrapping to get sampling distributions

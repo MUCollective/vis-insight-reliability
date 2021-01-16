@@ -37,13 +37,25 @@ rstan_options(auto_write = TRUE)
 - Database at AWS
 - Exit survey at Qualtrics
 
+```{r}
+x <- rnorm(50, mean = c(rep(0, 25), rep(3, 25)))
+p <- 2*pnorm(sort(-abs(x)))
+
+round(p, 3)
+round(p.adjust(p), 3)
+round(p.adjust(p, "BH"), 3)
+```
+
+
 
 ## Exploratory models
 
 ```{r load-data}
 # Load the data
 df <- read.csv("../data/final-study-cleaned.csv")
-df.bh <- read.csv("../data/final-study-bh.csv")
+
+df.bh <- read.csv("../data/final-study-bh.csv") %>%
+  filter(method == "p_bh")
 ```
 
 
@@ -101,16 +113,29 @@ df %>%
 
 In the following graph we show the mean values of TP, TN, FP and FN in each uncertainty visualization condition, and separated by the number of graphs that we show each participant.
 
+```{r}
+%>%
+  group_by(nregions) %>%
+  summarise(fdr = mean(fdr), .groups = "drop")
+```
+```{r}
+df.bh.mean
+```
+
+
+
 ```{r 02-mean-stats, fig.height = 5, fig.width = 8}
 df.bh.mean <- df.bh %>%
   group_by(nregions) %>%
-  summarise(tp = sum(tp), tn = sum(tn), fp = sum(fp), fn = sum(fn), positives = sum(is_profit), .groups = "drop") %>%
-  pivot_longer(c(tp:fn), names_to = ".category", values_to = ".value") %>%
-  rename( ntrials = nregions ) %>%
-  mutate( 
-    .category = toupper(.category),
-    .value = .value / (ntrials * 35) 
-  )
+  summarise( TP = sum(!true & reject),
+             FP = sum(true & reject),
+             TN = sum(true & !reject),
+             FN = sum(!true & !reject), 
+             .groups = "drop") %>%
+  mutate(FDR = FP / (FP + TP)) %>%
+  pivot_longer(c(TP:FDR), names_to = ".category", values_to = ".value") %>%
+  rename(ntrials = nregions) %>%
+  mutate(.value = .value / (ntrials * 35))
 
 data.ann <- tibble(
   .category = toupper(c("fn", "fp", "tn", "tp")), 
@@ -140,7 +165,7 @@ actual.statistics <- df %>%
 actual.statistics %>%
   ggplot() +
   geom_col(aes(x = pct, y = condition)) + 
-  geom_vline(data = df.bh.mean, aes(xintercept = .value), linetype = "dotted", color = "blue", size = 1) +
+  geom_vline(data = df.bh.mean, aes(xintercept = .value), color = "blue") +
   geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "red") +
   facet_grid(ntrials ~ .category) +
   labs(x = "percent of each type of correctness / errors", y = "type of correctness / error") +
@@ -278,9 +303,17 @@ data.fp_rate <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) 
   group_by(ntrials) %>%
   summarise(fdr = mean(uncorrected_fp) / mean(selected), .groups = "drop")
 
-data.bh.fp_rate <- pivot_wider(df.bh.mean, names_from = .category, values_from = .value) %>%
+data.bh.fp_rate <- df.bh %>%
+  group_by(nregions, trial) %>%
+  summarise( TP = sum(!true & reject),
+             FP = sum(true & reject),
+             TN = sum(true & !reject),
+             FN = sum(!true & !reject), 
+             .groups = "drop") %>%
+  mutate(fdr = ifelse(FP*TP != 0, FP / (FP + TP), 0)) %>%
+  rename(ntrials = nregions) %>%
   group_by(ntrials) %>%
-  summarise(fdr = FP / (TP + FP), .groups = "drop")
+  summarise(fdr = mean(fdr), .groups = "drop")
 ```
 
 In the figure below, we see that, on average, the FDR decreases for participants when presented with more graphs. This suggests that they are likely performing some form of implicit multiple comparisons correction. The FDR for $ngraphs = 8$ is 14.5 and for $ngraphs = 12$ is 0.1.
@@ -293,7 +326,7 @@ p1.fdr <- draws.fit %>%
   mutate( fp_rate = FP / (FP + TP)) %>%
   ggplot(aes(x = fp_rate, y = factor(ntrials))) +
   geom_halfeyeh(.width = c(.95, .8, .5)) +
-  geom_text(data = data.fp_rate, aes(x = uncorrected_fp, y = factor(ntrials)), label = "|", size = 8) +
+  # geom_text(data = data.fp_rate, aes(x = uncorrected_fp, y = factor(ntrials)), label = "|", size = 8) +
   geom_text(data = data.bh.fp_rate, aes(x = fdr, y = factor(ntrials)), label = "|", size = 8) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
   labs(x = "False Discovery Rate", y = "Number of graphs shown") +
@@ -323,6 +356,10 @@ p2.fdr <- draws.fit %>%
   )
 
 cowplot::plot_grid(p1.fdr, p2.fdr, rel_widths = c(6.5, 3.5))
+
+pdf(file = "../figures/figures-paper/03-fdr-nregions-1.pdf", useDingbats = FALSE, width = 12, height = 6)
+cowplot::plot_grid(p1.fdr, p2.fdr, rel_widths = c(6.5, 3.5))
+dev.off()
 ```
 
 
@@ -367,6 +404,17 @@ To answer this question, we first look at the FDR across the different uncertain
 
 
 ```{r 05-fdr-vis, fig.width = 8, fig.height = 3}
+data.bh.fp_rate.vis <- df.bh %>%
+  group_by(nregions, trial) %>%
+  summarise( TP = sum(!true & reject),
+             FP = sum(true & reject),
+             TN = sum(true & !reject),
+             FN = sum(!true & !reject), 
+             .groups = "drop") %>%
+  mutate(fdr = ifelse(FP*TP != 0, FP / (FP + TP), 0)) %>%
+  rename(ntrials = nregions) %>%
+  summarise(fdr = mean(fdr), .groups = "drop")
+
 p1 <- draws.fit %>%
   group_by(condition, .draw, .category) %>%
   summarise(.value = mean(.value), .groups = "drop") %>%
@@ -375,6 +423,8 @@ p1 <- draws.fit %>%
   ggplot(aes(x = fp_rate, y = condition)) +
   geom_halfeyeh(.width = c(.95, .8, .5)) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
+  geom_vline(data = data.bh.fp_rate.vis, aes(xintercept = fdr), color = "blue") +
+  xlim(c(0, 0.22)) +
   labs(x = "False Discovery Rate", y = "Number of graphs shown") +
   theme_minimal() +
   theme(
@@ -402,9 +452,9 @@ p2 <- draws.fit %>%
 
 plot <- cowplot::plot_grid(p1, p2, rel_widths = c(4, 5))
 
-# pdf(file = "../figures/figures-paper/05-fdr-vis-1.pdf", useDingbats = FALSE, width = 12, height = 6)
+pdf(file = "../figures/figures-paper/05-fdr-vis-1.pdf", useDingbats = FALSE, width = 12, height = 6)
 plot
-# dev.off()
+dev.off()
 ```
 From the figure above, we can see that, on average, using uncertainty representatoions such as `Hypothetical Outcome Plot of the mean difference` and `Probability Density Function of the difference` reliably decreases the FDR, with an observed decrease of 0.04 and 0.03 percentage points respectively (95% CI: [-0.072, 0.005] and [0.065, 0.02] respectively).  Some other commonly used uncertainty representations, such as Confidence Intervals appear to have a small, but unreliable effect towards decreasing (~ 1.5 percentage points, 95% CI: [-0.05, 0.02]) FDR. On the other hand, other certain other uncertainty representations such as `dotplots of the mean difference` and Hypothetical outcome plot of bootstrapped data samples` appear to have no improvement or even slightly worsen the FDR. (the exact estimates are present in the table below)
 

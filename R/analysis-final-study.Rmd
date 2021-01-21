@@ -37,16 +37,6 @@ rstan_options(auto_write = TRUE)
 - Database at AWS
 - Exit survey at Qualtrics
 
-```{r}
-x <- rnorm(50, mean = c(rep(0, 25), rep(3, 25)))
-p <- 2*pnorm(sort(-abs(x)))
-
-round(p, 3)
-round(p.adjust(p), 3)
-round(p.adjust(p, "BH"), 3)
-```
-
-
 
 ## Exploratory models
 
@@ -112,17 +102,6 @@ df %>%
 ### Probability of TP/TN/FP/FN in each condition
 
 In the following graph we show the mean values of TP, TN, FP and FN in each uncertainty visualization condition, and separated by the number of graphs that we show each participant.
-
-```{r}
-%>%
-  group_by(nregions) %>%
-  summarise(fdr = mean(fdr), .groups = "drop")
-```
-```{r}
-df.bh.mean
-```
-
-
 
 ```{r 02-mean-stats, fig.height = 5, fig.width = 8}
 df.bh.mean <- df.bh %>%
@@ -292,18 +271,21 @@ data.sample <- rbind(
   mutate(readRDS("../data/simulated_data_8regions.rds"), nregions = 8)
 )
 
-data.fp_rate <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) ) %>%
-  mutate(
-    p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
-    is_profit = ifelse(mu > 0, TRUE, FALSE),
-    selected = ifelse(p_value < 0.05, TRUE, FALSE),
-    uncorrected_fp = ifelse(p_value < 0.05 & !is_profit, TRUE, FALSE)
-  ) %>%
+data.raw.fdr <- df.bh %>%
+  filter(method == "uncorrected") %>%
+  group_by(nregions, trial) %>%
+  summarise( TP = sum(!true & reject),
+             FP = sum(true & reject),
+             TN = sum(true & !reject),
+             FN = sum(!true & !reject), 
+             .groups = "drop") %>%
+  mutate(fdr = ifelse(FP*TP != 0, FP / (FP + TP), 0)) %>%
   rename(ntrials = nregions) %>%
   group_by(ntrials) %>%
-  summarise(fdr = mean(uncorrected_fp) / mean(selected), .groups = "drop")
+  summarise(fdr = mean(fdr), .groups = "drop")
 
-data.bh.fp_rate <- df.bh %>%
+data.bh.fdr <- df.bh %>%
+  filter(method == "bh") %>%
   group_by(nregions, trial) %>%
   summarise( TP = sum(!true & reject),
              FP = sum(true & reject),
@@ -315,6 +297,7 @@ data.bh.fp_rate <- df.bh %>%
   group_by(ntrials) %>%
   summarise(fdr = mean(fdr), .groups = "drop")
 ```
+
 
 In the figure below, we see that, on average, the FDR decreases for participants when presented with more graphs. This suggests that they are likely performing some form of implicit multiple comparisons correction. The FDR for $ngraphs = 8$ is 14.5 and for $ngraphs = 12$ is 0.1.
 

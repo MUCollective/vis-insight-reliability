@@ -136,31 +136,35 @@ data.sample <- rbind(
   mutate(readRDS("../data/simulated_data_8regions.rds"), nregions = 8)
 )
 
-# this stores the BH values for each trial
-df.bh <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) ) %>%
-  mutate(
-    p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
-    alpha = 0.05
-  ) %>%
-  group_by(nregions, trial) %>%
-  arrange(trial, nregions, p_value) %>%
-  mutate( 
-    rank = ifelse(nregions == 8, 1:8, 1:12),
-    critical_value = rank/nregions * alpha,
-    bh_profit = ifelse(p_value < critical_value, TRUE, FALSE),
-    is_profit = ifelse(mu > 0, TRUE, FALSE)
-  ) %>%
-  select(-c(mu, data)) %>%
-  mutate(
-    tp = ifelse(bh_profit == TRUE & is_profit == TRUE, 1, 0),
-    tn = ifelse(bh_profit == FALSE & is_profit == FALSE, 1, 0),
-    fp = ifelse(bh_profit == TRUE & is_profit == FALSE, 1, 0),
-    fn = ifelse(bh_profit == FALSE & is_profit == TRUE, 1, 0)
-  ) %>%
-  group_by(nregions)
+alpha = 0.05
 
+df.bh <- select(data.sample, -c(p_h1, -effect_size, mean, sd, population) ) %>%
+  mutate(nregions = as.numeric(nregions)) %>%
+  mutate(
+    p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
+    p_bh = p.adjust(p_uncorrected, "BH")
+  ) %>%
+  select(-data) %>%
+  pivot_longer(starts_with("p_"), names_to = "method", names_prefix = "p_", values_to = "p") %>%
+  mutate(reject = p < alpha, true = mu == 0)
+
+write.csv(df.bh, "../data/final-study-bh.csv", row.names = FALSE)
+```
+
+```{r}
 df.bh %>%
-  write.csv("../data/final-study-bh.csv")
+  group_by(trial, nregions) %>%
+  summarise(fp_bh = sum(fp), .groups = "drop") %>%
+  ggplot(aes(x = factor(trial), y = fp_bh, fill = factor(nregions))) +
+  geom_col()
+```
+
+```{r}
+df.bh %>%
+  group_by(trial, nregions) %>%
+  summarise(fp_bh = sum(fp), .groups = "drop") %>%
+  ggplot(aes(x = factor(trial), y = fp_bh, fill = factor(nregions))) +
+  geom_col()
 ```
 
 

@@ -446,11 +446,57 @@ stimuli_fn <- function(df_stimuli, alpha){
 
 ```
 
+
+```{r}
+stimuli_alldelta_fn <- function(df_stimuli, alpha){
+  df_stimuli %>%
+    group_by(nregions, trial) %>%
+    mutate(p_raw = 
+             map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) %>%
+    mutate(p_bh = p.adjust(p_raw, "BH")) %>%
+    select(-data) %>%
+    pivot_longer(starts_with("p_"), names_to = "method", values_to = "p") %>%
+    mutate(reject = p < alpha,
+           true = mu == 0) %>%
+    group_by(trial, nregions, method) %>%
+    summarize( tp = sum(!true & reject),
+               fp = sum(true & reject),
+               tn = sum(true & !reject),
+               fn = sum(!true & !reject), 
+               .groups = "drop_last") %>%
+    mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
+           pay = (tp - 19 * fp + tn - fn) * 1,
+           power = (tp)/(tp + fn)) %>% # this produces NA's; set to 1?
+    group_by(nregions, method) %>%
+    summarize(E_pay = mean(pay), 
+              E_fdr = mean(fdr), 
+              power = mean(power), .groups = "drop")
+}
+```
+
+
 ```{r}
 stimuli_alpha_df <- expand.grid(alpha = alphas) %>%
   split(1:nrow(.)) %>%
   map_dfr(~ cbind(.x, stimuli_fn(df_stimuli, .$alpha), row.names = NULL))
+
+
+stimuli_alldelta_df <-  expand.grid(alpha = alphas) %>%
+  split(1:nrow(.)) %>%
+  map_dfr(~ cbind(.x, stimuli_alldelta_fn(df_stimuli, .$alpha), row.names = NULL))
 ```
+
+```{r}
+stimuli_alldelta_df %>%
+  filter(alpha == 0.05) 
+  ggplot(aes(x = E_fdr, y = nregions)) +
+  geom_point() + 
+  geom_vline(aes(xintercept = 0.05))  +
+  xlim(c(0, .2)) + 
+  labs(title = "Stimulis data, without grouping by delta")
+```
+
+
 
 ```{r}
 (p1 <- stimuli_alpha_df %>%

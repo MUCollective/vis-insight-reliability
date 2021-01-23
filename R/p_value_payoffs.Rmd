@@ -147,6 +147,24 @@ E_payoff_raw = function(alpha, n, p_null, mu, sigma, K) {
 }
 ```
 
+$P(p < \alpha | \neg null) = F_p$
+
+$$
+\begin{align}
+E[TP] &= F_p(\alpha | \mu, \sigma, K)(1 - P(null)) \\
+E[FP] &= a \alpha P(null) \\
+E[TN] &= (1 - \alpha)P(null) \\
+E[FN] &= (1 - F_p(\alpha | \mu, \sigma, K))(1 - P(null)) \\
+\textrm{Thus, a participant will mark positive if}, \\
+ E[TP] - E[FP] &\geq E[TN] - E[FN] \\
+ F_p(\alpha | \mu, \sigma, K)(1 - P(null)) - a \alpha P(null) &\geq (1 - \alpha)P(null) - (1 - F_p(\alpha | \mu, \sigma, K))(1 - P(null)) \\
+ a \alpha P(null) &\leq F_p(\alpha | \mu, \sigma, K) (1 - P(null)) + (1 - F_p(\alpha | \mu, \sigma, K)(1 - P(null))) - (1 - \alpha)P(null) \\
+ &\leq (1 - P(null)) - (1 - \alpha)P(null) \\
+ a &\leq \frac{1 - \alpha P(null)}{\alpha P(null)}
+\end{align}
+$$
+
+
 ## Simulations of payoffs
 
 Set up the simulation:

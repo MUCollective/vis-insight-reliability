@@ -299,6 +299,12 @@ data.bh.fdr <- df.bh %>%
   summarise(fdr = mean(fdr), .groups = "drop")
 ```
 
+FDR's for combinations of method (uncorrected and B-H) and number of regions/hypotheses (8 or 12)
+
+```{r}
+bind_rows(uncorrected = data.raw.fdr, bh = data.bh.fdr, .id = "method") %>% arrange(ntrials, method)
+```
+
 
 In the figure below, we see that, on average, the FDR decreases for participants when presented with more graphs. This suggests that they are likely performing some form of implicit multiple comparisons correction. The FDR for $ngraphs = 8$ is 14.5 and for $ngraphs = 12$ is 0.1.
 

@@ -140,6 +140,7 @@ alpha = 0.05
 
 df.bh <- select(data.sample, -c(p_h1, -effect_size, mean, sd, population) ) %>%
   mutate(nregions = as.numeric(nregions)) %>%
+  group_by(trial, nregions) %>% # NEU
   mutate(
     p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
     p_bh = p.adjust(p_uncorrected, "BH")

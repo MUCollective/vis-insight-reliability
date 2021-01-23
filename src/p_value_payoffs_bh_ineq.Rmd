@@ -15,6 +15,7 @@ library(beepr)
 library(tidyr)
 library(forcats)
 library(patchwork)
+library(glue)
 ```
 
 We want to show that our decision-making incentives encourage the rational participant to avoid excess false positives in a multiple-comparison scenario. The simulation is in two parts: first, we compare the maximum payout attenable via different decision-making strategies. These strategies include:
@@ -132,7 +133,7 @@ set.seed(32)
            pay = (tp - 19 * fp + tn - fn) * 1,
            ineq = tp - 19 * fp -tn + fn,
            power = (tp)/(tp + fn)) # this produces NA's
- )
+)
 ```
 
 ```{r}
@@ -249,18 +250,19 @@ df %>%
 setting seed https://davisvaughan.github.io/furrr/articles/articles/gotchas.html#argument-evaluation
 
 ```{r, eval= FALSE}
-# plan(multisession, workers = 13)
-# options <- furrr_options(seed = 32)
-# 
-# (sim_df <- expand.grid(
-#     alpha = alphas,
-#     p_null = p_nulls
-#   ) %>%
-#     split(1:nrow(.)) %>%
-#     future_map_dfr(~cbind(.x, finding_payout(.$alpha, .$p_null), row.names = NULL), .options = options)
-# )
-# 
-# beep()
+plan(multisession, workers = 13)
+options <- furrr_options(seed = 32)
+
+(sim_df <- expand.grid(
+    alpha = alphas,
+    p_null = p_nulls
+  ) %>%
+    split(1:nrow(.)) %>%
+    future_map_dfr(~cbind(.x, finding_payout(.$alpha, .$p_null), row.names = NULL), .options = options)
+)
+
+beep()
+saveRDS(sim_df, "sim_n100_alpha_pnull_delta_seed32.rds")
 # saveRDS(sim_df, "sim_n5000_alpha_pnull.rds")
 # saveRDS(sim_df, "sim_n5000_alpha_pnull_delta.rds")
 # saveRDS(sim_df, "sim_n5000_alpha_pnull_delta_seed32.rds")
@@ -269,7 +271,7 @@ setting seed https://davisvaughan.github.io/furrr/articles/articles/gotchas.html
 
 ```{r}
 # sim_df <- readRDS("sim_n5000_alpha_pnull.rds")
-sim_df <- readRDS("sim_n5000_alpha_pnull_delta.rds")
+sim_df <- readRDS("sim_n100_alpha_pnull_delta_seed32.rds")
 ```
 
 ### Results
@@ -454,6 +456,7 @@ stimuli_alpha_df <- expand.grid(alpha = alphas) %>%
 (p1 <- stimuli_alpha_df %>%
   ggplot(aes(alpha, E_pay)) + 
   geom_point() + 
+   geom_vline(aes(xintercept = 0.05), color = "red") + 
   facet_grid(nregions ~ method + delta) +
   scale_color_viridis_c() + 
   theme_minimal() +
@@ -463,7 +466,7 @@ stimuli_alpha_df <- expand.grid(alpha = alphas) %>%
 
 ```{r}
 (p2 <- sim_df %>% 
-  filter(p_null == 0.475) %>%
+  filter(p_null < 0.46 & p_null > 0.45) %>%
   ggplot(aes(alpha, E_pay)) + 
   # geom_point(alpha = 0.2) +
   geom_point()  +
@@ -501,7 +504,7 @@ For the discussion section
   geom_vline(aes(xintercept = 0.05)) +
   geom_pointrange(aes(xmin = mean_fdr - ci, xmax = mean_fdr + ci)) +
   facet_grid(method ~ delta) + 
-  labs(title="With simulated data, multiple iterations")
+  labs(title= glue("With simulated data, {n_iter} iterations"))
 )
 ```
 
@@ -516,7 +519,7 @@ stimuli_alpha_df %>%
   geom_point() + 
   geom_vline(aes(xintercept = 0.05)) +
   facet_grid(method ~ delta) +
-  labs(title = "With experimental stimuli, equiv to one iteration, no uncertainty")
+  labs(title = "With experimental stimuli, equiv to one iteration")
 )
   
 ```

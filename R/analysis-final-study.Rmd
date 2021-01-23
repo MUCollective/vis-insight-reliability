@@ -44,8 +44,9 @@ rstan_options(auto_write = TRUE)
 # Load the data
 df <- read.csv("../data/final-study-cleaned.csv")
 
-df.bh <- read.csv("../data/final-study-bh.csv") %>%
-  filter(method == "p_bh")
+df.bh <- read.csv("../data/final-study-bh.csv") 
+# df.bh <- read.csv("../data/final-study-bh.csv") %>%
+  # filter(method == "p_bh")
 ```
 
 

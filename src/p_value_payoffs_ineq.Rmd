@@ -481,12 +481,12 @@ df %>%
   ylim(c(0,1))
 
 
-# Number of things people select are about the same between nregions = 8 and 12
 
 df %>%
   mutate(select = tp + fp) %>%
   group_by(nregions) %>%
-  summarize(m = mean(select), ci = 1.96 * sd(select)/sqrt(n()))  
+  summarize(m = mean(select), ci = 1.96 * sd(select)/sqrt(n())) %>%
+  mutate(frac = m / nregions)
   ggplot(aes(factor(nregions), m)) + 
   geom_pointrange(aes(ymin = m - ci, ymax = m + ci))
 

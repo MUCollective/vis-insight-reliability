@@ -43,7 +43,6 @@ rstan_options(auto_write = TRUE)
 ```{r load-data}
 # Load the data
 df <- read.csv("../data/final-study-cleaned.csv")
-
 df.bh <- read.csv("../data/final-study-bh.csv")
 ```
 
@@ -291,6 +290,12 @@ data.bh.fdr <- df.bh %>%
   rename(ntrials = nregions) %>%
   group_by(ntrials) %>%
   summarise(fdr_bh = mean(fdr), .groups = "drop")
+```
+
+FDR's for combinations of method (uncorrected and B-H) and number of regions/hypotheses (8 or 12)
+
+```{r}
+bind_rows(uncorrected = data.raw.fdr, bh = data.bh.fdr, .id = "method") %>% arrange(ntrials, method)
 ```
 
 

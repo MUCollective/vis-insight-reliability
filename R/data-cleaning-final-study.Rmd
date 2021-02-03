@@ -140,13 +140,25 @@ alpha = 0.05
 
 df.bh <- select(data.sample, -c(p_h1, -effect_size, mean, sd, population) ) %>%
   mutate(nregions = as.numeric(nregions)) %>%
+  group_by(trial, nregions) %>%
   mutate(
     p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
     p_bh = p.adjust(p_uncorrected, "BH")
   ) %>%
   select(-data) %>%
   pivot_longer(starts_with("p_"), names_to = "method", names_prefix = "p_", values_to = "p") %>%
-  mutate(reject = p < alpha, true = mu == 0)
+  mutate(reject = p < alpha, true = mu == 0) %>%
+  filter(method == "bh") %>%
+  group_by(nregions, trial) %>%
+  summarise( TP = sum(!true & reject),
+             FP = sum(true & reject),
+             TN = sum(true & !reject),
+             FN = sum(!true & !reject), 
+             .groups = "drop") %>%
+  mutate(fdr = ifelse(FP*TP != 0, FP / (FP + TP), 0)) %>%
+  rename(ntrials = nregions) %>%
+  group_by(ntrials) %>%
+  summarise(fdr_bh = mean(fdr), .groups = "drop")
 
 write.csv(df.bh, "../data/final-study-bh.csv", row.names = FALSE)
 ```
@@ -172,7 +184,7 @@ df.bh %>%
 ```{r}
 data.fp_rate <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) ) %>%
   mutate(
-    p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
+    p_value = round(map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value), 5),
     is_profit = ifelse(mu > 0, TRUE, FALSE),
     selected = ifelse(p_value < 0.05, TRUE, FALSE),
     uncorrected_fp = ifelse(p_value < 0.05 & !is_profit, TRUE, FALSE)

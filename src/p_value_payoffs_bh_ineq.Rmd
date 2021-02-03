@@ -11,10 +11,10 @@ library(ggplot2)
 library(dplyr)
 library(purrr)
 library(furrr)
-library(beepr)
+# library(beepr)
 library(tidyr)
 library(forcats)
-library(patchwork)
+# library(patchwork)
 ```
 
 We want to show that our decision-making incentives encourage the rational participant to avoid excess false positives in a multiple-comparison scenario. The simulation is in two parts: first, we compare the maximum payout attenable via different decision-making strategies. These strategies include:
@@ -101,8 +101,9 @@ We can get the expected number of selections under B-H with a few simulation ite
 ```{r warning = FALSE}
 set.seed(32)
 
-(df <-
-  expand_grid(nregions = c(8, 12),
+n_iter = 1
+
+df <-  expand_grid(nregions = c(8, 12),
     iter = 1:n_iter) %>%
     split(1:nrow(.)) %>%
     map_dfr(~ bind_cols(.,
@@ -132,7 +133,8 @@ set.seed(32)
            pay = (tp - 19 * fp + tn - fn) * 1,
            ineq = tp - 19 * fp -tn + fn,
            power = (tp)/(tp + fn)) # this produces NA's
- )
+
+df
 ```
 
 ```{r}
@@ -435,19 +437,39 @@ stimuli_fn <- function(df_stimuli, alpha){
                .groups = "drop_last") %>%
     mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0),
            pay = (tp - 19 * fp + tn - fn) * 1,
-           power = (tp)/(tp + fn)) %>% # this produces NA's; set to 1?
-    group_by(nregions, method, delta) %>%
-    summarize(E_pay = mean(pay), 
-              E_fdr = mean(fdr), 
-              power = mean(power), .groups = "drop")
+           power = (tp)/(tp + fn))
 }
 
 ```
 
 ```{r}
-stimuli_alpha_df <- expand.grid(alpha = alphas) %>%
-  split(1:nrow(.)) %>%
-  map_dfr(~ cbind(.x, stimuli_fn(df_stimuli, .$alpha), row.names = NULL))
+alphas = 0.05
+# stimuli_alpha_df <- 
+expand.grid(alpha = alphas) %>%
+  map_dfr(~ cbind(.x, stimuli_fn(df_stimuli, .$alpha), row.names = NULL)) %>%
+  ungroup() %>%
+  group_by(method, nregions) %>%
+  summarise(fdr = mean(fdr), .groups = "drop")
+
+df_stimuli %>%
+  group_by(nregions, trial, delta) %>%
+  mutate(
+    p_raw = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
+    p_bh = p.adjust(p_raw, "BH"),
+    alpha = alphas
+  ) %>%
+  select(-data) %>%
+  pivot_longer(starts_with("p_"), names_to = "method", values_to = "p") %>%
+  filter(method == "p_bh") %>%
+  mutate(reject = p < alpha, true = mu == 0) %>%
+  group_by(nregions, method, trial) %>%
+  summarize( tp = sum(!true & reject),
+             fp = sum(true & reject),
+             tn = sum(true & !reject),
+             fn = sum(!true & !reject), 
+             .groups = "drop_last") %>%
+  mutate(fdr =  ifelse(tp * fp != 0, (fp) / (tp + fp), 0)) %>%
+  summarize(fdr = mean(fdr))
 ```
 
 ```{r}
@@ -520,6 +542,8 @@ stimuli_alpha_df %>%
 )
   
 ```
+
+
 ```{r}
 p3 /p4
 ```

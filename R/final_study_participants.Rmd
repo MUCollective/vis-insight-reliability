@@ -9,6 +9,8 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 ```
 
+Inspecting participant trials, utility for Prolific approval and bonus calculation, and average pay calculation. 
+
 
 # Summary
 
@@ -210,6 +212,20 @@ df_clean %>%
   
 ```
 
+```{r}
+(bonus_by_participant <- df_clean %>%
+  group_by(prolific_pid, vis) %>%
+  summarize(end_pay = sum(trial_pay)) %>%
+  filter(end_pay > 0) %>%
+  group_by(vis) %>%
+  mutate(bonus = end_pay / max(end_pay)) %>%
+  mutate(bonus = format(bonus, digits = 1)) %>%
+  mutate(bonus = as.numeric(bonus)) 
+)
+```
+
+
+
 Aggregate bonus
 
 ```{r}
@@ -237,19 +253,30 @@ Bonuses paid (plus processing fees?):
 17.50
 
 
-## Average reward per hour
+## Median time taken
 
-
-Not averaging by participants, $/hr
+Unit: hours; there were participants who took a long time and were manually approved.
 
 ```{r}
 df_prolific %>% 
-  group_by(vis) %>%
-  summarize(n = n(), t = sum(as.numeric(time_taken))/3600) %>%
-  mutate(base = n * 4.67) %>%
-  left_join(bonus_by_vis, by = "vis") %>%
-  mutate(avg_pay = (base + bonus_sum) / t) %T>% print() %>%
-  summarize(mean(avg_pay))
+  summarize(median(as.numeric(time_taken))/3600)
+```
+
+
+
+## Average reward per hour
+
+By participant, taking the median
+
+```{r}
+right_join(bonus_by_participant, df_prolific, by = c("prolific_pid"="participant_id", "vis")) %>%
+  ungroup() %>%
+  select(prolific_pid, time_taken, bonus) %>%
+  mutate(t_hr = as.numeric(time_taken) / 3600) %>%
+  replace_na(list(bonus = 0)) %>%
+  mutate(base = 4.67, avg_comp = (base + bonus)/t_hr) %>%
+  summarize(median(avg_comp))
+
 ```
 
 

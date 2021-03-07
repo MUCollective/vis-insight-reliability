@@ -197,7 +197,6 @@ prior_multinom = c(
 # this file is too large for Github
 # download from here: https://drive.google.com/file/d/1tisQrmD6pfGcsdMeOdLNk347fZDNJCDQ/view?usp=sharing
 fit <- readRDS("../model-fits/fit-thinned.rds")
-
 summary(fit)
 ```
 

@@ -7,17 +7,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
-library(magrittr)
-library(rstan)
-library(brms)
-library(tidybayes)
-library(modelr)
-library(lubridate)
-library(cowplot)
-library(bayesplot)
-options(mc.cores = parallel::detectCores())
-rstan_options(auto_write = TRUE)
-theme_set(theme_tidybayes() + panel_border())
 ```
 
 
@@ -42,13 +31,13 @@ theme_set(theme_tidybayes() + panel_border())
 ## List of prolific_pid's
 
 ```{r}
-prolific_fnames <- list.files(".", pattern = "final_prolific_(.+).csv")
+prolific_fnames <- list.files("../data/final-study", pattern = "final_prolific_(.+).csv", full.names = TRUE)
   
 df_prolific <- 
   map_df(
     prolific_fnames,
     ~ read_csv(.x, col_types = cols(time_taken = col_character())) %>%
-      mutate(vis = gsub("final_prolific_(.*).csv", "\\1", .x))
+      mutate(vis = gsub("../data/final-study/final_prolific_(.*).csv", "\\1", .x))
   )
 ```
 
@@ -69,7 +58,7 @@ From last pilot
 
 
 ```{r}
-df_db <- read_csv("final_db_allconds.csv", col_types = cols(flags = col_character()))
+df_db <- read_csv("../data/final-study/final_db_allconds.csv", col_types = cols(flags = col_character()))
 ```
 
 ```{r}
@@ -222,15 +211,12 @@ df_clean %>%
   group_by(vis) %>%
   mutate(bonus = end_pay / max(end_pay)) %>%
   mutate(bonus = format(bonus, digits = 1)) %>%
-
   # filter(vis=="halfeye") %>%
   # filter(vis == "hops-2") %>%
   # filter(vis == "raw-data") %>%
   # filter(vis == "hops-1") %>%
   # filter(vis == "dotplot") %>%
   filter(vis == "ci") %>%
-  
-  
   ungroup() %>%
   mutate(prolific_pid = fct_drop(prolific_pid)) %>%
   select(-c(vis, end_pay)) %>%

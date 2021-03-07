@@ -1,0 +1,68 @@
+---
+title: "Participant summary"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+
+## Participants from prolific
+
+```{r}
+prolific_fnames <- list.files("../data/final-study/", pattern = "final_prolific_(.+).csv")
+  
+participants <- 
+  map_df(
+    prolific_fnames,
+    ~ read_csv(paste0("../data/final-study/", .x), col_types = cols(time_taken = col_character())) %>%
+      mutate(vis = gsub("final_prolific_(.*).csv", "\\1", .x))
+  ) %>%
+  mutate(prolific_pid = participant_id ) %>%
+  filter(status == "AWAITING REVIEW" | status == "APPROVED")
+```
+
+Excluded participants in analysis are still paid, see `data-cleaning-final-study.Rmd`
+
+```{r}
+excluded_participant <- c("5c6c403c3dbfc80001abf9f4")
+participants_w_repeats <- c("5d44cb2385d859001a75bdea", "5c446de311bc1c0001fff3fe", "5eaf6d165753b3670ba59587")
+excluded_sessions <- c("5eb99d9a309df40bf582e7f3", "5ebb422be7d9a811a6b845c0", "5ebdb036e779750e69dc04e5")
+
+
+participants %>%
+  filter((participant_id %in% excluded_participant) | (session_id %in% excluded_sessions)) 
+```
+
+## Time to complete
+
+participant 5e96c331be6098147190e61c was manually approved 
+
+```{r}
+participants %>%
+  mutate(time_taken = as.numeric(time_taken)) %>%
+  filter(time_taken > 10000)
+```
+
+Since there's an outlier, using median completion time, in minutes
+
+```{r}
+participants %>%
+  mutate(time_taken = as.numeric(time_taken)) %>%
+  summarize(median(time_taken/60))
+```
+
+## Base compensation
+
+Set in Prolific,  $4.67
+
+## Median hourly compensation
+
+```{r}
+participants %>%
+  mutate(time_taken_hrs = as.numeric(time_taken)/3600) %>%
+  summarize(median(time_taken_hrs))
+```
+

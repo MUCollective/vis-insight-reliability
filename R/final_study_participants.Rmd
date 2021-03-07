@@ -69,7 +69,7 @@ df_db <- read_csv("../data/final-study/final_db_allconds.csv", col_types = cols(
 df <- df_db %>%
   right_join(df_prolific %>% 
       select(prolific_pid, vis), by = "prolific_pid")  %>% # should have joined by session_id
-  mutate(prolific_pid = factor(prolific_pid)) 
+  mutate(prolific_pid = factor(prolific_pid)) %>%
   arrange(id) %>%
   mutate(fp = -1 * fp) %>% # make it the number of false positives (count >= 0)
   mutate(fn = -1 * fn) %>%
@@ -135,9 +135,11 @@ df_1vis %>%
                  by = c("trial", "nregions", "prolific_pid")) %>%
       mutate(n = replace_na(n, 0))
     ) %>%
-  filter(n != 1) %>%
-  split(.$prolific_pid) %>%
-  map( ~arrange(., nregions, trial))
+  # filter(n != 1) %>%
+  filter(prolific_pid == "5c6c403c3dbfc80001abf9f4") %>%
+  arrange(-n)
+  # split(.$prolific_pid) %>%
+  # map( ~arrange(., nregions, trial))
 
 
 ```
@@ -259,7 +261,7 @@ Unit: hours; there were participants who took a long time and were manually appr
 
 ```{r}
 df_prolific %>% 
-  summarize(median(as.numeric(time_taken))/3600)
+  summarize(median(as.numeric(time_taken))/60)
 ```
 
 

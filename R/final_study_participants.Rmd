@@ -122,7 +122,8 @@ df_1vis %>%
 Look for repeated trials and/or trials not completed
 
 ```{r}
-df_1vis %>%
+# df_1vis %>%
+df %>%
   mutate(prolific_pid = as.character(prolific_pid)) %>%
   group_by(prolific_pid, trial, nregions) %>%
   tally() %>%
@@ -135,9 +136,14 @@ df_1vis %>%
                  by = c("trial", "nregions", "prolific_pid")) %>%
       mutate(n = replace_na(n, 0))
     ) %>%
-  # filter(n != 1) %>%
-  filter(prolific_pid == "5c6c403c3dbfc80001abf9f4") %>%
-  arrange(-n)
+  filter(n != 1)  %>%
+  group_by(prolific_pid, trial, nregions) %>%
+  count()  %>%
+  group_by(prolific_pid) %>%
+  summarize(n_repeated_trials = n())
+  # filter(prolific_pid == "5c6c403c3dbfc80001abf9f4") %>%
+  # arrange(-n)
+  
   # split(.$prolific_pid) %>%
   # map( ~arrange(., nregions, trial))
 

@@ -7,25 +7,18 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
-library(magrittr)
-library(rstan)
-library(brms)
-library(tidybayes)
-library(modelr)
-library(lubridate)
-library(cowplot)
-library(bayesplot)
-options(mc.cores = parallel::detectCores())
-rstan_options(auto_write = TRUE)
-theme_set(theme_tidybayes() + panel_border())
 ```
+
+Inspecting participant trials, utility for Prolific approval and bonus calculation, and average pay calculation. 
 
 
 # Summary
 
+Experimental design
+
 | Between/within             | 12 regions | 8 regions |
 |----------------------------|------------|-----------|
-| HOPS 1                     | 17.5       | 17.5      |
+| HOPS 1                     | 17.5 min   | 17.5      |
 | HOPS 2                     | 17.5       | 17.5      |
 | CI                         | 17.5       | 17.5      |
 | qdotplots                  | 17.5       | 17.5      |
@@ -42,13 +35,13 @@ theme_set(theme_tidybayes() + panel_border())
 ## List of prolific_pid's
 
 ```{r}
-prolific_fnames <- list.files(".", pattern = "final_prolific_(.+).csv")
+prolific_fnames <- list.files("../data/final-study", pattern = "final_prolific_(.+).csv", full.names = TRUE)
   
 df_prolific <- 
   map_df(
     prolific_fnames,
     ~ read_csv(.x, col_types = cols(time_taken = col_character())) %>%
-      mutate(vis = gsub("final_prolific_(.*).csv", "\\1", .x))
+      mutate(vis = gsub("../data/final-study/final_prolific_(.*).csv", "\\1", .x))
   )
 ```
 
@@ -69,13 +62,13 @@ From last pilot
 
 
 ```{r}
-df_db <- read_csv("final_db_allconds.csv", col_types = cols(flags = col_character()))
+df_db <- read_csv("../data/final-study/final_db_allconds.csv", col_types = cols(flags = col_character()))
 ```
 
 ```{r}
 df <- df_db %>%
   right_join(df_prolific %>% 
-      select(prolific_pid, vis), by = "prolific_pid")  %>%
+      select(prolific_pid, vis), by = "prolific_pid")  %>% # should have joined by session_id
   mutate(prolific_pid = factor(prolific_pid)) %>%
   arrange(id) %>%
   mutate(fp = -1 * fp) %>% # make it the number of false positives (count >= 0)
@@ -92,6 +85,7 @@ df <- df_db %>%
   filter(prolific_pid != "5a25b9afb51f2c0001e5da04") # manual approval (compensated for bug)
   
 ```
+
 
 ```{r}
 summary(df)
@@ -125,17 +119,11 @@ df_1vis %>%
 
 ## Inspection
 
-```{r}
-# in case someone didn't complete all the trials
-df_mask <- crossing(
-  trial = 1:35,
-  nregions = c(8,12)
-)
-```
-
+Look for repeated trials and/or trials not completed
 
 ```{r}
-df_1vis %>%
+# df_1vis %>%
+df %>%
   mutate(prolific_pid = as.character(prolific_pid)) %>%
   group_by(prolific_pid, trial, nregions) %>%
   tally() %>%
@@ -148,9 +136,16 @@ df_1vis %>%
                  by = c("trial", "nregions", "prolific_pid")) %>%
       mutate(n = replace_na(n, 0))
     ) %>%
-  filter(n != 1) %>%
-  split(.$prolific_pid) %>%
-  map( ~arrange(., nregions, trial))
+  filter(n != 1)  %>%
+  group_by(prolific_pid, trial, nregions) %>%
+  count()  %>%
+  group_by(prolific_pid) %>%
+  summarize(n_repeated_trials = n())
+  # filter(prolific_pid == "5c6c403c3dbfc80001abf9f4") %>%
+  # arrange(-n)
+  
+  # split(.$prolific_pid) %>%
+  # map( ~arrange(., nregions, trial))
 
 
 ```
@@ -198,21 +193,10 @@ df_clean <- df_norepeat %>%
 
 
 
-## (Bonus calculation)
+## Bonus calculation
 
-  df %>%
-    filter(vis == "dotplot") %>%
-    group_by(vis, prolific_pid) %>%
-    summarise(end_pay = last(cumulative_pay)) %T>% print() %>%
-    filter(end_pay >0 ) %>%
-    group_by(vis) %>%
-    mutate(bonus = (end_pay)/(max(end_pay)) * 1.5) %>%
-    mutate(bonus = format(bonus, digits = 2)) %>%
-    ungroup() %>%
-    mutate(prolific_pid = fct_drop(prolific_pid)) %>%
-    select(-c(vis, end_pay)) %>%
-    split(f = .$prolific_pid) %>%
-    walk( ~ cat(format_delim(., ",", col_names = FALSE)))
+
+For Prolific bulk bonus payment 
 
 ```{r}
 df_clean %>%
@@ -222,15 +206,12 @@ df_clean %>%
   group_by(vis) %>%
   mutate(bonus = end_pay / max(end_pay)) %>%
   mutate(bonus = format(bonus, digits = 1)) %>%
-
-  # filter(vis=="halfeye") %>%
+  filter(vis=="halfeye") %>%
   # filter(vis == "hops-2") %>%
   # filter(vis == "raw-data") %>%
   # filter(vis == "hops-1") %>%
   # filter(vis == "dotplot") %>%
-  filter(vis == "ci") %>%
-  
-  
+  # filter(vis == "ci") %>%
   ungroup() %>%
   mutate(prolific_pid = fct_drop(prolific_pid)) %>%
   select(-c(vis, end_pay)) %>%
@@ -239,11 +220,86 @@ df_clean %>%
   
 ```
 
-Bonuses paid: 
-16.66
-6.87
+```{r}
+(bonus_by_participant <- df_clean %>%
+  group_by(prolific_pid, vis) %>%
+  summarize(end_pay = sum(trial_pay)) %>%
+  filter(end_pay > 0) %>%
+  group_by(vis) %>%
+  mutate(bonus = end_pay / max(end_pay)) %>%
+  mutate(bonus = format(bonus, digits = 1)) %>%
+  mutate(bonus = as.numeric(bonus)) 
+)
+```
+
+
+
+Aggregate bonus
+
+```{r}
+(bonus_by_vis <- df_clean %>%
+  group_by(prolific_pid, vis) %>%
+  summarize(end_pay = sum(trial_pay)) %>%
+  filter(end_pay > 0) %>%
+  group_by(vis) %>%
+  mutate(bonus = end_pay / max(end_pay)) %>%
+  mutate(bonus = format(bonus, digits = 1)) %>%
+  mutate(bonus = as.numeric(bonus)) %>%
+  summarize(bonus_sum = sum(bonus)) %>%
+  arrange(bonus_sum)
+)
+```
+
+
+
+Bonuses paid (plus processing fees?): 
 6.32
+6.87
 7.48
 13.02 
+16.66
 17.50
----
+
+
+## Median time taken
+
+Unit: hours; there were participants who took a long time and were manually approved.
+
+```{r}
+df_prolific %>% 
+  summarize(median(as.numeric(time_taken))/60)
+```
+
+
+
+## Average reward per hour
+
+By participant, taking the median
+
+```{r}
+right_join(bonus_by_participant, df_prolific, by = c("prolific_pid"="participant_id", "vis")) %>%
+  ungroup() %>%
+  select(prolific_pid, time_taken, bonus) %>%
+  mutate(t_hr = as.numeric(time_taken) / 3600) %>%
+  replace_na(list(bonus = 0)) %>%
+  mutate(base = 4.67, avg_comp = (base + bonus)/t_hr) %>%
+  summarize(median(avg_comp))
+
+```
+
+
+Data from Prolific, $/hr
+
+```{r}
+tribble(
+  ~vis, ~avg_pay,
+  "ci", 10.84,
+  "dotplot", 10.75,
+  "halfeye", 12.19,
+  "hops-1", 6.7,
+  "hops-2", 9.42,
+  "raw-data", 8.3,
+) %>%
+  summarize(mean(avg_pay))
+```
+  

@@ -490,9 +490,7 @@ stimuli_alldelta_fn <- function(df_stimuli, alpha){
            pay = (tp - 19 * fp + tn - fn) * 1,
            power = (tp)/(tp + fn)) %>% # this produces NA's; set to 1?
     group_by(nregions, method) %>%
-    summarize(E_pay = mean(pay), 
-              E_fdr = mean(fdr), 
-              power = mean(power), .groups = "drop")
+    summarize(across(everything(), mean), .groups = "drop")
 }
 ```
 
@@ -508,18 +506,27 @@ stimuli_alldelta_df <-  expand.grid(alpha = alphas) %>%
   map_dfr(~ cbind(.x, stimuli_alldelta_fn(df_stimuli, .$alpha), row.names = NULL))
 ```
 
+
+```{r}
+stimuli_alldelta_df %>%
+  filter(alpha == 0.05) %>%
+  mutate(across(tp:fn, ~ . / nregions))
+```
+
+
+
 ```{r}
 (stimuli_fdr_plot_df <- stimuli_alldelta_df %>%
   filter(alpha == 0.05) %>%
-  select(-E_pay)
+  select(-pay)
 )
 
 stimuli_fdr_plot_df %>%
-  ggplot(aes(x = E_fdr, y = factor(nregions), color = method)) + 
+  ggplot(aes(x = fdr, y = factor(nregions), color = method)) + 
   geom_point() + 
   # geom_hline(aes(yintercept = 1)) + 
   # geom_hline(aes(yintercept = 2)) + 
-  geom_text(aes(label =(format(round(E_fdr, 3), nsmall = 3))), nudge_y = 0.2) + 
+  geom_text(aes(label =(format(round(fdr, 3), nsmall = 3))), nudge_y = 0.2) + 
   theme_minimal() +
   xlim(c(0,.1)) + 
   xlab("E[FDR]")  +
@@ -535,7 +542,7 @@ ggsave("fdr_simulation.pdf", device = cairo_pdf, width = 4.5, height = 4.5/2)
 
 ```{r}
 (p1 <- stimuli_alpha_df %>%
-  ggplot(aes(alpha, E_pay)) + 
+  ggplot(aes(alpha, pay)) + 
   geom_point() + 
    geom_vline(aes(xintercept = 0.05), color = "red") + 
   facet_grid(nregions ~ method + delta) +

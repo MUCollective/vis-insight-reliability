@@ -1,0 +1,258 @@
+---
+title: "anonymise-data"
+author: "Abhraneel Sarma"
+date: "3/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(magrittr)
+library(rstan)
+library(brms)
+library(modelr)
+library(tidybayes)
+```
+
+
+## Participants
+
+We load the data provided by Prolific and the logs that we collect in our database. We assign each participant a unique user ID. We then select participants which have completed the study (codes: APPROVED or AWAITING REVIEW)
+
+
+```{r}
+prolific_fnames <- list.files("../data/final-study/identifiable/", pattern = "final_prolific_(.+).csv")
+  
+participants <- map_df(
+    prolific_fnames,
+    ~ read_csv(paste0("../data/final-study/identifiable/", .x), col_types = cols(time_taken = col_character())) %>%
+      mutate(vis = gsub("final_prolific_(.*).csv", "\\1", .x))
+  ) %>%
+  mutate(prolific_pid = participant_id ) %>%
+  filter(status == "AWAITING REVIEW" | status == "APPROVED")
+```
+
+## Database response records and data cleaning
+
+We store each participants' responses in a database. We import those responses and join them with the dataframe which contains the list of participants who have successfully completed the study. We also include the **correct** responses i.e. whether a region is actually profitable or not based on the total population, and not just the sample provided.
+
+We wrangle the data into a format convenient for subsequent modeling and add columns which help us identify group-level effects. Since each participant in our pilot study participated in 90 trials, we index the trial number for each participant. The trials are also divided into blocks of three, which we index separately. Finally, we compute the payout for each trial.
+
+```{r}
+# The "solutions" to participant trials
+df_soln <- read.csv("../data/true_effects.csv") %>% 
+  group_by(trial, nregions) %>%
+  summarise(
+    positives = sum(is_profit == TRUE),
+    negatives = sum(is_profit == FALSE),
+    is_profit = list(is_profit),
+    .groups = "drop"
+  )
+
+# Read data
+df_db <- read.csv("../data/final-study/identifiable/final_db_allconds.csv")
+
+# Select participants
+df <- participants %>%
+  select(prolific_pid, session_id, completed_date_time) %>%
+  inner_join(df_db, by = c("prolific_pid", "session_id")) %>%
+  mutate(nregions = tp + tn + abs(fp) + abs(fn)) %>%
+  inner_join(df_soln, by = c("trial", "nregions")) %>%
+  arrange(id) %>%
+  group_by(prolific_pid) %>%
+  mutate(
+    trial_id = row_number(), # trial number 1...90
+    ntrials = nregions,
+    nregions = as.factor(nregions)
+  ) %>% 
+  group_by(prolific_pid, incentive) %>%
+  mutate(
+    alpha = (incentive/100),
+    block_id = row_number(), # trial number within a bloc 1...30
+    block = floor((trial_id - 1) / 35) + 1,
+    trial_pay = c(head(cumulative_pay, 1), diff(cumulative_pay)),
+    fp = -1 * fp, # make it the number of false positives (count >= 0)
+    fn = -1 * fn
+  ) %>%
+  ungroup() %>%
+  filter(flags == "") %>%
+  select( -c(duration, incentive, trial_pay, responses, cumulative_pay, flags, positives:is_profit) )
+```
+
+
+## Anonymise the input data
+
+We use the following function to anonymisation the participants prolific IDs. This function generates a unique ID for each input value and provides a one-to-one mapping with the output. In other words the same input string will always result in the same output.
+
+```{r}
+# function to anonymize worker ids
+anonymize <- function(x, algo="crc32"){
+  unq_hashes <- vapply(unique(x), function(object) digest::digest(object, algo=algo), FUN.VALUE="", USE.NAMES=TRUE)
+  unname(unq_hashes[x])
+}
+
+# this creates a new DF where participants IDs are anonymised
+df.anon <- df %>%
+  mutate(prolific_pid = anonymize(prolific_pid)) %>%
+  group_by(prolific_pid)
+```
+
+## Anonymising the model fit object
+
+The model fit in BRMS did not use anonymised participant IDs. Here, we try to see if they can be post-hoc anonymised. We first load the BRMS object and extract the samples.
+
+```{r}
+# load the model fit object
+fit <- readRDS("../model-fits/fit-thinned-identifiable.rds")
+
+# get the underlying stan obj
+fit.samples <- fit$fit@sim$samples
+```
+
+Our analysis model runs four chains so the `fit.samples` object contains four named lists corresponding to each chain as seen here:
+
+```{r}
+length(fit.samples)
+```
+
+These lists contains samples for each coefficient in the model. The random effects coefficients contain the identifiable prolific id. We first convert the first list to a dataframe so that it is easier to manipulate. Below I show a small splice of the dataframe to show that it contains identifiable info:
+
+```{r}
+data.frame(coef = names(fit.samples[[1]])) %>%
+  filter(row_number() > 105 & row_number() < 126)
+```
+
+Each of these four lists has the same names so we can just concentrate on removing the identifiable information from one of these lists and can change it easily for the others:
+
+```{r}
+# each 
+check_names <- function(x, y) {
+  identical(names(x), names(y))
+}
+
+all(sapply(fit.samples, FUN = check_names, fit.samples[[1]]))
+```
+
+We create a data frame with the coefficient names and separate it into columns which contain coefficients, participant id, and other group level markers:
+
+```{r}
+df.coef_names <- data.frame(coef = names(fit.samples[[1]])) %>%
+  tidyr::extract(col = coef, into = c("coef", "prolific_pid", "group"), regex = "([a-zA-Z_0-9:]+)\\[?([A-Za-z0-9]*),?([A-Za-z0-9:_]*)\\]?")
+```
+As a sanity check (since we use regex to separate out the columns), I combine the columns to generate the original coefficient names and compare it to the names of the original list:
+
+```{r}
+df.coef_names %>%
+  mutate(coef_old  = ifelse((prolific_pid != "") & (group != ""), paste0(coef, "[", prolific_pid, ",", group, "]"), coef)) %>%
+  extract2("coef_old") %>%
+  identical(., names(fit.samples[[1]]))
+```
+
+
+Now we can get to actually anonymising the participant ids:
+
+```{r}
+new_coef_names <- df.coef_names %>%
+  mutate(
+    prolific_pid = ifelse(prolific_pid != "", anonymize(prolific_pid), ""),
+    coef_new = ifelse((prolific_pid != "") & (group != ""), paste0(coef, "[", prolific_pid, ",", group, "]"), coef)
+  ) %>%
+  extract2("coef_new")
+  
+
+names(fit.samples[[1]]) <- new_coef_names
+names(fit.samples[[2]]) <- new_coef_names
+names(fit.samples[[3]]) <- new_coef_names
+names(fit.samples[[4]]) <- new_coef_names
+```
+
+
+Finally, we update the original brms object and save the new object as an RDS file
+
+```{r}
+fit$data %>% select(-y) %>%
+  mutate(prolific_pid = factor(anonymize(as.character(prolific_pid))))
+```
+
+
+```{r}
+fit$fit@sim$samples <- fit.samples
+
+# also need to update fit$data which brms uses in its predict method
+fit$data <- fit$data %>%
+  mutate(prolific_pid = factor(anonymize(as.character(prolific_pid))))
+
+# saveRDS(fit, "../model-fits/fit-thinned.rds")
+```
+
+
+## Verification
+
+Now let's see if the original methods for extracting tidy draws still work. First we take the data frame and wrangle it into the proper format; we remove duplicates and participants who do not meet our inclusion criteria.
+
+```{r}
+df.clean <- df.anon %>%
+  group_by(prolific_pid, session_id, completed_date_time) %>%
+  nest() %>%
+  ungroup() %>%
+  group_by(prolific_pid) %>%
+  arrange(completed_date_time) %>%
+  filter(row_number() != 2 & session_id != "5ebad1c4f35d4605e457da67") %>%
+  unnest(data) %>%
+  mutate(
+    condition = as.character(condition),
+    condition = replace(condition, condition == "raw-data", "raw_data"),
+    condition = replace(condition, condition == "hops-1", "hops_mean"),
+    condition = replace(condition, condition == "hops-2", "hops_bootstrap"),
+    adj_trial_id = (1:70)/35 - 1 # adjust and scale the trial_id from (1, 70) -> (-1, 1)
+  ) %>% 
+  ungroup()
+```
+To validate, we see if the tidybayes methods to generate samples work. Below we see that they do.
+
+```{r}
+draws.fit <- data_grid(df.clean, condition, nesting(ntrials, nregions), adj_trial_id) %>%
+  add_fitted_draws(fit, re_formula = NA) %>% 
+  ungroup() %>%
+  mutate(
+    .category = toupper(as.character(.category)),
+    .value = .value / ntrials,
+    condition = factor(condition, levels = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean")),
+    trial_id = round((adj_trial_id + 1)*35)
+  )
+
+
+draws.fit %>%
+  group_by(ntrials, .draw, .category) %>%
+  summarise(.value = mean(.value), .groups = "drop") %>%
+  pivot_wider( names_from = .category, values_from = .value ) %>%
+  mutate( fp_rate = FP / (FP + TP)) %>%
+  ggplot(aes(x = fp_rate, y = factor(ntrials))) +
+  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
+  labs(x = "False Discovery Rate", y = "Number of graphs shown") +
+  scale_x_continuous(limits = c(0, 0.2), breaks = seq(-0.2, 0.2, by = 0.04))
+```
+
+
+## Save the anonymised files
+
+```{r}
+for (i in prolific_fnames) {
+  read_csv(paste0("../data/final-study/identifiable/", i), col_types = cols(time_taken = col_character())) %>%
+    mutate(participant_id = anonymize(participant_id)) %>%
+    write.csv(., file = paste0("../data/final-study/anonymised/", i), row.names = FALSE)
+}
+
+
+read.csv("../data/final-study/identifiable/final_db_allconds.csv") %>%
+  mutate(prolific_pid = anonymize(prolific_pid)) %>%
+  write.csv(., file = "../data/final-study/anonymised/final_db_allconds.csv", row.names = FALSE)
+```
+
+
+
+
+

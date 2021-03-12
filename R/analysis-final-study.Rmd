@@ -221,9 +221,9 @@ prior_multinom = c(
   prior(normal(0, 0.5), class = sd, dpar = "mutn")
 )
 
-# df$y <- df %>% with(cbind(tp, tn, fn, fp)) 
+df$y <- df %>% with(cbind(tp, tn, fn, fp)) 
 
-# fit <- brm(bf(y | trials(ntrials) ~ condition * trial_id * nregions + (trial_id * nregions | prolific_pid)), data = df, family = multinomial(), prior = prior_multinom, cores = 2, chains = 2, inits = init_fn, iter = 7500, warmup = 2500)
+# fit <- brm(bf(y | trials(ntrials) ~ condition * trial_id * nregions + (trial_id * nregions | prolific_pid)), data = df, family = multinomial(), prior = prior_multinom, cores = 4, chains = 4, inits = init_fn, iter = 7500, warmup = 2500)
 
 # this file is too large for Github
 # download from here: https://drive.google.com/file/d/1tisQrmD6pfGcsdMeOdLNk347fZDNJCDQ/view?usp=sharing
@@ -231,14 +231,13 @@ fit <- readRDS("../model-fits/fit-thinned.rds")
 summary(fit)
 ```
 
-
 ### Model diagnostics
 
-Before we show the results from the model, we first run some posterior predictive checks to make sure that the model is able to recover the 
+Before we show the results from the model, we first run some posterior predictive checks to make sure that the model is able to recover the actual data
 
 ```{r predicted-draws-pp-check, eval = FALSE, fig.width = 6, fig.height = 3}
 # predicted.fit <- data_grid(df, nesting(condition, prolific_pid, ntrials, nregions, adj_trial_id)) %>%
-#  add_predicted_draws(fit, re_formula = ~ (adj_trial_id * nregions | prolific_pid), n = 1000)
+#   add_predicted_draws(fit, re_formula = ~ (adj_trial_id * nregions | prolific_pid), n = 1000)
 
 # this file is too large for Github
 # download from here: https://drive.google.com/file/d/1XraSS5I0VzsRzRgA0Ajc18nBax8eLBhv/view?usp=sharing

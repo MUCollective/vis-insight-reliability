@@ -1,4 +1,4 @@
-"trial","effect_size","mu","region_idx","nregions","method","p","reject","true"
+"trial","effect_size","mu","region_idx","nregions","method","p","reject","null"
 1,0.3,0,1,12,"uncorrected",0.530644195282626,FALSE,TRUE
 1,0.3,0,1,12,"bh",0.546898558012076,FALSE,TRUE
 1,0.3,0,2,12,"uncorrected",0.0212396982458974,TRUE,TRUE

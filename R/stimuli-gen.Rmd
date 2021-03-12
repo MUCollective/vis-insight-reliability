@@ -14,6 +14,7 @@ library(purrr)
 library(ggplot2)
 library(modelr)
 library(tidybayes)
+
 # library(gamlss.dist)
 theme_set( theme_light() ) +
   theme_update(
@@ -59,7 +60,7 @@ In our (initial pilot) study, we use a between subjects design where each partic
 
 ```{r setup_vars}
 # we will load the data instead
-set.seed(9175)
+
 sample_size = 20
 n_trials = 10
 n_stores = 20
@@ -68,6 +69,7 @@ baseline = 0
 p_h1_levels = 0.5 # c(seq(2, 8))
 # effect_sizes = c(0.2, 0.5, 0.8) We use mean and SD pairs instead
 mu_sd <- list(list(mu = 0.9, sd = 3), list(mu = 1.2, sd = 2.67), list(mu = 1.5, sd = 2.5))
+
 d <- crossing( 
     trial = seq(1:n_trials),
     p_h1 = p_h1_levels,
@@ -91,11 +93,13 @@ d <- crossing(
 First, we will simulate the data for the entire population. We create a data frame which contains all possible combinations of trials (indexed 1 to 10), and mean and standard deviation pairs. We then use a binomial distribution to simulate the mean for each of the 10 regions that will be presented to participants in a trial. Taking the value for each region as the mean of a normal distribution, we simulate the profits for the entire population (n = 20). We then randomly sample 20 stores from the population.
 
 ```{r, eval = FALSE}
-set.seed(9175)
+# set.seed(12345)
+
 data.sim <- d %>%
   mutate(
     mu = map(p_h1, ~ (rbinom(n_region[[1]], 1, .x)))
   )
+
 data.sim.12reg <- data.sim %>%
   mutate(region_idx = map(mu, ~ seq(1:n_region[[1]]))) %>%
   unnest(cols = c(mu, region_idx)) %>%
@@ -103,6 +107,7 @@ data.sim.12reg <- data.sim %>%
     mu = mean * mu,
     data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
   )
+
 data.sim.8reg <- data.sim %>%
   mutate(
     mu = map(mu, ~ sample(., size = 8)),
@@ -127,6 +132,34 @@ nu = sample_size - 1
 
 ## Decision making using different strategies
 Below, we compute the FDR if analyst accounted for multiple comparisons
+
+```{r}
+data.sample <- rbind(
+  mutate(data.sim.12reg, nregions = 12), 
+  mutate(data.sim.8reg, nregions = 8)
+)
+
+alpha = 0.05
+
+select(data.sample, -c(p_h1, -effect_size, mean, sd) ) %>%
+  mutate(nregions = as.numeric(nregions)) %>%
+  mutate(
+    p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
+    p_bh = p.adjust(p_uncorrected, "BH")
+  ) %>%
+  select(-data) %>%
+  pivot_longer(starts_with("p_"), names_to = "method", names_prefix = "p_", values_to = "p") %>%
+  mutate(reject = p < alpha, true = mu == 0) %>%
+  filter(method == "uncorrected") %>%
+  group_by(nregions) %>%
+  summarise( TP = sum(!true & reject),
+             FP = sum(true & reject),
+             TN = sum(true & !reject),
+             FN = sum(!true & !reject), 
+             .groups = "drop") %>%
+  mutate(FDR = FP / (FP + TP))
+```
+
 
 ```{r}
 df.bh <- bind_rows(list("8" = data.sim.8reg, "12" = data.sim.12reg), .id = "nregions") %>%
@@ -203,10 +236,6 @@ dat1 <- data.sim.12reg %>%
 ```
 
 ```{r}
-dat2 <- c(dat1, -7.6, -8.1, -7.3, -8.2, -6.1)
-
-data.sim.12reg[data.sim.12reg$trial == 3 & data.sim.12reg$region_idx == 1,]$data <- list(dat2)
-
 p <- data.sim.12reg %>%  
   unnest( cols = c(data) ) %>%
   filter( trial == 3 & region_idx == 1 ) %>%

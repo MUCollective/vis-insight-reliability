@@ -17,18 +17,29 @@ library(tidyverse)
 library(magrittr)
 ```
 
+
+## Anonymisation
+We first anonymise the data received from Prolific.
+
+```{r, eval = FALSE}
+participants
+
+df_db
+```
+
+
 ## Participants
 
 We load the data provided by Prolific and the logs that we collect in our database. We assign each participant a unique user ID. We then select participants which have completed the study (codes: APPROVED or AWAITING REVIEW)
 
 
 ```{r}
-prolific_fnames <- list.files("../data/final-study/", pattern = "final_prolific_(.+).csv")
+prolific_fnames <- list.files("../data/final-study/anonymised/", pattern = "final_prolific_(.+).csv")
   
 participants <- 
   map_df(
     prolific_fnames,
-    ~ read_csv(paste0("../data/final-study/", .x), col_types = cols(time_taken = col_character())) %>%
+    ~ read_csv(paste0("../data/final-study/anonymised/", .x), col_types = cols(time_taken = col_character())) %>%
       mutate(vis = gsub("final_prolific_(.*).csv", "\\1", .x))
   ) %>%
   mutate(prolific_pid = participant_id ) %>%
@@ -54,7 +65,7 @@ df_soln <- read.csv("../data/true_effects.csv") %>%
   )
 
 # Read data
-df_db <- read.csv("../data/final-study/final_db_allconds.csv")
+df_db <- read.csv("../data/final-study/anonymised/final_db_allconds.csv")
 
 # Select participants
 df <- participants %>%
@@ -83,7 +94,32 @@ df <- participants %>%
   select( -c(duration, incentive, trial_pay, responses, cumulative_pay, flags, positives:is_profit) )
 ```
 
-First we check if the data is complete (by filtering out all participants whose n is not 70):
+First we check if there are participants who took the study multiple times:
+
+```{r}
+df %>%
+  group_by(prolific_pid, session_id, completed_date_time) %>%
+  nest() %>%
+  ungroup() %>%
+  group_by(prolific_pid) %>%
+  mutate(count = n()) %>%
+  filter(count >= 2)
+```
+
+We notice that three participants have completed the study twice. As we didn't anticipate this happening, and hence this was not a preregistered criteria we exclude the second block of trials by these participants, based on the time stamp.
+
+```{r}
+df <- df %>%
+  group_by(prolific_pid, session_id, completed_date_time) %>%
+  nest() %>%
+  ungroup() %>%
+  group_by(prolific_pid) %>%
+  arrange(completed_date_time) %>%
+  filter(row_number() != 2) %>%
+  unnest(data)
+```
+
+Next, we check if the data is complete (by filtering out all participants whose n is not 70):
 
 ```{r}
 df %>%
@@ -93,19 +129,12 @@ df %>%
 ```
 
 
-Above, we see that there's one participant whose responses are not complete. Participant with prolific_pid = "5c6c403c3dbfc80001abf9f4" completed only one trial (out of 70), and hence was excluded. Most other responses which were excluded were rejected on Prolific. Further 3 participants completed the study twice, as we didn't anticipate this happening, and hence this was not a preregistered criteria we exclude the second block of trials by these participants.
-
-```{r}
-df %>%
-  filter((prolific_pid != "5c6c403c3dbfc80001abf9f4") & !(session_id %in% c("5eb9e7d910e3631221edec6c", "5ebaf0285b160109e4db83bf", "5ebdb036e779750e69dc04e5"))) %>% 
-  group_by(condition) %>%
-  summarise(n = n() / 70, .groups = "drop")
-```
+Above, we see that there's one participant whose responses are not complete. Participant with pid = "5c6c403c3dbfc80001abf9f4" completed only one trial (out of 70), and hence was excluded. Most other responses which were excluded were rejected on Prolific.
 
 
 ```{r}
 df.adj <- df %>%
-  filter((prolific_pid != "5c6c403c3dbfc80001abf9f4") & !(session_id %in% c("5eb99d9a309df40bf582e7f3", "5ebb422be7d9a811a6b845c0", "5ebdb036e779750e69dc04e5"))) %>%
+  filter((prolific_pid != "807a2eef")) %>%
   group_by(prolific_pid) %>%
   mutate(
     condition = as.character(condition),
@@ -138,48 +167,32 @@ data.sample <- rbind(
 
 alpha = 0.05
 
-df.bh <- select(data.sample, -c(p_h1, -effect_size, mean, sd, population) ) %>%
+df.strategy <- select(data.sample, -c(p_h1, -effect_size, mean, sd, population) ) %>%
   mutate(nregions = as.numeric(nregions)) %>%
-  group_by(trial, nregions) %>% # NEU
+  group_by(trial, nregions) %>%
   mutate(
     p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
     p_bh = p.adjust(p_uncorrected, "BH")
   ) %>%
   select(-data) %>%
   pivot_longer(starts_with("p_"), names_to = "method", names_prefix = "p_", values_to = "p") %>%
-  mutate(reject = p < alpha, true = mu == 0)
+  mutate(reject = p < alpha, null = mu == 0)
 
-write.csv(df.bh, "../data/final-study-bh.csv", row.names = FALSE)
-```
-
-```{r}
-df.bh %>%
-  group_by(trial, nregions) %>%
-  summarise(fp_bh = sum(fp), .groups = "drop") %>%
-  ggplot(aes(x = factor(trial), y = fp_bh, fill = factor(nregions))) +
-  geom_col()
-```
-
-```{r}
-df.bh %>%
-  group_by(trial, nregions) %>%
-  summarise(fp_bh = sum(fp), .groups = "drop") %>%
-  ggplot(aes(x = factor(trial), y = fp_bh, fill = factor(nregions))) +
-  geom_col()
+write.csv(df.strategy, "../data/final-study-strategy.csv", row.names = FALSE)
 ```
 
 
-
 ```{r}
-data.fp_rate <- select(data.sample, -c(p_h1, mean, sd, effect_size, population) ) %>%
-  mutate(
-    p_value = round(map_dbl(data, ~ t.test(.x)$p.value), 5),
-    is_profit = ifelse(mu > 0, TRUE, FALSE),
-    selected = ifelse(p_value < 0.05, TRUE, FALSE),
-    uncorrected_fp = ifelse(p_value < 0.05 & !is_profit, TRUE, FALSE)
-  ) %>%
+df.fdr <- df.strategy %>%
+  group_by(nregions, trial, method) %>%
+  summarise( TP = sum(!null & reject),
+             FP = sum(null & reject),
+             TN = sum(null & !reject),
+             FN = sum(!null & !reject), 
+             .groups = "drop") %>%
+  mutate(fdr = ifelse(FP*TP != 0, FP / (FP + TP), 0)) %>%
   rename(ntrials = nregions) %>%
-  group_by(ntrials) %>%
-  summarise(uncorrected_fp = mean(uncorrected_fp) / mean(selected), .groups = "drop")
+  group_by(ntrials, method) %>%
+  summarise(fdr = mean(fdr), .groups = "drop")
 ```
 

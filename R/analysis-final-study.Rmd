@@ -282,6 +282,7 @@ draws.fit <- data_grid(df, condition, nesting(ntrials, nregions), adj_trial_id) 
   ungroup() %>%
   mutate(
     .category = toupper(as.character(.category)),
+    .category = fct_relevel(.category, "TN", "TP", "FN", "FP"),
     .value = .value / ntrials,
     condition = factor(condition, levels = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean")),
     trial_id = round((adj_trial_id + 1)*35)
@@ -352,7 +353,7 @@ draws.fit %>%
   summarise(.value = mean(.value), .groups = "drop") %>%
   pivot_wider( names_from = .category, values_from = .value ) %>%
   mutate( fp_rate = FP / (FP + TP)) %>%
-  compare_levels(variable = fp_rate, by = ntrials) %>%
+  group_by(ntrials) %>%
   median_qi(fp_rate)
 ```
 
@@ -526,9 +527,9 @@ plot
 
 
 
-```{r, eval = FALSE fig.heihgt = 16, fig.width = 16}
-pdf(file = "analysis-final-study_files/figure-latex/marginalised-dist.pdf", useDingbats = FALSE, width = 24, height = 12)
-plot
+```{r, eval = FALSE}
+pdf(file = "analysis-final-study_files/figure-latex/prob-rates-3.pdf", useDingbats = FALSE, width = 18, height = 9)
+plot.full
 dev.off()
 ```
 
@@ -537,19 +538,26 @@ dev.off()
 
 Before we compare the composite scores, we look at the potential learning effects in our primary research questions. In repeated measures experimental designs such as this, where we also provide participants feedback (in the first 5 trials in each block), we might expect to see some learning effect (or at least variation in the responses over the course of the trials). In the figure below, we plot the change in the probability of TP/TN/FP/FN in each condition.
 
+
 ```{r, 08-probs-vis-learning, fig.width = 8, fig.height = 5}
-plot.full <- draws.fit %>%
-  group_by(condition, ntrials, .draw, trial_id, .category) %>%
-  ggplot() +
-  stat_lineribbon(aes(x = trial_id, y = .value)) +
-  scale_fill_brewer() + 
-  ylim(c(0, 0.65)) +
-  facet_grid(.category ~ interaction(ntrials, condition))
+df.design <- crossing(condition = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean"), ntrials = c(8, 12)) %>%
+  mutate(ntrials = as.integer(ntrials))
 
-plot.full
+data.raw.fdr2 <- right_join(df.strategy_by_trial, df.design, by = c("ntrials")) %>% filter(method == "uncorrected" & .category != "FDR")
+data.bh.fdr2 <- right_join(df.strategy_by_trial, df.design, by = c("ntrials")) %>% filter(method == "bh" & .category != "FDR")
+
+(
+  plot.full <- draws.fit %>%
+    group_by(condition, ntrials, .draw, trial_id, .category) %>%
+    ggplot() +
+    stat_lineribbon(aes(x = trial_id, y = .value)) +
+    geom_hline(data = data.raw.fdr2, aes(yintercept = .value), color = col_uncorrected) +
+    geom_hline(data = data.bh.fdr2, aes(yintercept = .value), color = col_bh) +
+    scale_fill_brewer() + 
+    ylim(c(0, 0.65)) +
+    facet_grid(.category ~ interaction(ntrials, condition))
+)
 ```
-
-This indicates that there might be an effect of learning that which might affect our interpretation of the results. Specifically, if the effect of learning is more significant than any of the effects of the different conditions that we manipulate, we might not expect to see any differences in the results when we compare the final trial. Another common practice is to compare the results of the final 5-10 trials (we take 5 here). We choose these points specifically because the within-subjects manipulation is performed in two blocks of 35 trials each giving us reasonable end points. 
 
 From the figure below, we see that the our participants still perform some form of implicit multiple comparisons correction, and this persists even after accounting for the potential effect of learning.
 

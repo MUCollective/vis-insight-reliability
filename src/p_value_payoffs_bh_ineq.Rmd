@@ -50,7 +50,7 @@ K <- 20          # number of data points in a hypothesis/region
 # sigma <- 2.5     
 
 p_null <- 0.5    # the bane of my existance 
-n_iter <- 100   # number of iterations in simulation
+n_iter <- 1000   # number of iterations in simulation
 alphas <- seq(from = 0.001, to = 0.1, by = 0.001)
 p_nulls <- ppoints(10)
 fp_penalty <- 19
@@ -259,11 +259,13 @@ options <- furrr_options(seed = 32)
     p_null = p_nulls
   ) %>%
     split(1:nrow(.)) %>%
-    future_map_dfr(~cbind(.x, finding_payout(.$alpha, .$p_null), row.names = NULL), .options = options)
+    future_map_dfr(~cbind(.x, finding_payout(.$alpha, .$p_null), row.names = NULL), 
+                   .options = options, .progress = TRUE)
 )
 
 beep()
-saveRDS(sim_df, "sim_n100_alpha_pnull_delta_seed32.rds")
+# saveRDS(sim_df, "sim_n100_alpha_pnull_delta_seed32.rds")
+saveRDS(sim_df, "sim_n1000_alpha_pnull_delta_seed32.rds")
 # saveRDS(sim_df, "sim_n5000_alpha_pnull.rds")
 # saveRDS(sim_df, "sim_n5000_alpha_pnull_delta.rds")
 # saveRDS(sim_df, "sim_n5000_alpha_pnull_delta_seed32.rds")
@@ -272,7 +274,7 @@ saveRDS(sim_df, "sim_n100_alpha_pnull_delta_seed32.rds")
 
 ```{r}
 # sim_df <- readRDS("sim_n5000_alpha_pnull.rds")
-sim_df <- readRDS("sim_n100_alpha_pnull_delta_seed32.rds")
+sim_df <- readRDS("sim_n1000_alpha_pnull_delta_seed32.rds")
 ```
 
 ### Results

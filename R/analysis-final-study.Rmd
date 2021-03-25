@@ -331,6 +331,14 @@ ame_draws<- draws.fit %>%
   pivot_longer(TP:FDR, names_to = ".category", values_to = ".value")  %>% 
   mutate(.category = factor(.category, levels = c("TP", "TN", "FP", "FN", "FDR")))
 
+
+(ame_draws_bytrial <- draws.fit %>%
+  pivot_wider(names_from = .category, values_from = .value) %>%
+  mutate(FDR = FP / (FP + TP)) %>%
+    filter(trial_id %in% c(1, 70)) %>%
+  group_by(condition, ntrials, trial_id, .draw) %>%
+  summarize(across(TP:FDR, mean), .groups = "drop_last")
+)
 # this version looks similar but gives slightly different results
 # draws.fit %>%
 #   group_by(ntrials, .draw, .category) %>%
@@ -364,10 +372,10 @@ ame_draws %>% ggplot(aes(x = .value, y = condition)) +
    geom_vline(data = filter(df.strategy_by_trial, method=="bh"), aes(xintercept = .value), color = col_bh) +
   geom_vline(data = filter(df.strategy_by_trial, method=="uncorrected"), aes(xintercept = .value), color = col_uncorrected) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FDR"), aes(xintercept = xint)) +
-  facet_grid(factor(ntrials) ~ .category, space = "free_x")   + 
+  facet_grid(factor(ntrials) ~ .category, scales = "free_x")   + # space = "free_x"
   theme_classic()
 
-ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf", width = 12, height = 6)
+ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf", width = 24, height = 6)
 
 ```
 

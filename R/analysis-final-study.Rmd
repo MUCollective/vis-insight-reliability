@@ -351,6 +351,7 @@ ame_draws<- draws.fit %>%
 
 Visualizing the confusion matrix plus FDR, with participant response means
 
+Colors: https://coolors.co/27187e-758bfd-aeb8fe-f5b700-f1f2f6
 
 ```{r}
 participant_means <- df %>%
@@ -367,15 +368,16 @@ participant_means <- df %>%
   mutate(.category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR")))
 
 ame_draws %>% ggplot(aes(x = .value, y = condition)) + 
-  stat_ccdfinterval(fill = "#A5C4D4", color = "#393D3F") + 
-  geom_point(data = participant_means, color = "#F5B700")+
+  stat_ccdfinterval(fill = "#EBEBEB", color = "#393D3F") + 
+  geom_point(data = participant_means, shape = 21, color = "#F5B700", fill = "#F5B700")+#758BFD
    geom_vline(data = filter(df.strategy_by_trial, method=="bh"), aes(xintercept = .value), color = col_bh) +
   geom_vline(data = filter(df.strategy_by_trial, method=="uncorrected"), aes(xintercept = .value), color = col_uncorrected) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FDR"), aes(xintercept = xint)) +
-  facet_grid(factor(ntrials) ~ .category, scales = "free_x")   + # space = "free_x"
+  facet_grid(factor(ntrials) ~ .category, space = "free_x")   + # space = "free_x"
   theme_classic()
 
-ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf", width = 24, height = 6)
+ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf", 
+       width = 12, height = 4, device=cairo_pdf)
 
 ```
 

@@ -329,7 +329,12 @@ ame_draws<- draws.fit %>%
   group_by(condition, ntrials, .draw) %>%
   summarize(across(TP:FDR, mean), .groups = "drop_last") %>%
   pivot_longer(TP:FDR, names_to = ".category", values_to = ".value")  %>% 
-  mutate(.category = factor(.category, levels = c("TP", "TN", "FP", "FN", "FDR")))
+  mutate(.category = factor(.category, levels = c("TP", "TN", "FP", "FN", "FDR"))) %>%
+  mutate(condition = factor(condition, levels = c("dotplot", "halfeye", "hops_mean", "hops_bootstrap", "ci", "raw_data"))) %>%
+  mutate(condition = fct_recode(condition, PDF = "halfeye", 
+                                baseline = "raw_data", CI = "ci", 
+                                `HOPs-b` = "hops_bootstrap",
+                                `HOPs-mean` = "hops_mean"))
 
 
 (ame_draws_bytrial <- draws.fit %>%
@@ -361,11 +366,16 @@ participant_means <- df %>%
   summarize(across(c(tp:fn, fdr), ~ mean(.)), .groups = "drop") %>%
   mutate(across(tp:fn, ~ ./ntrials))  %>%
   pivot_longer(cols = c(tp:fdr), names_to = ".category", values_to = ".value") %>%
-  mutate(.category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR")))
- 
- 
+  mutate(.category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR"))) %>% 
+  mutate(condition = factor(condition, levels = c("dotplot", "halfeye", "hops_mean", "hops_bootstrap", "ci", "raw_data"))) %>%
+  mutate(condition = fct_recode(condition, PDF = "halfeye", 
+                                baseline = "raw_data", CI = "ci", 
+                                `HOPs-b` = "hops_bootstrap",
+                                `HOPs-mean` = "hops_mean"))
+
  df.strategy_by_trial <- df.strategy_by_trial %>%
-  mutate(.category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR")))
+  mutate(.category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR"))) 
+
 
 ame_draws %>% ggplot(aes(x = .value, y = condition)) + 
   stat_ccdfinterval(fill = "#EBEBEB", color = "#393D3F") + 
@@ -373,7 +383,8 @@ ame_draws %>% ggplot(aes(x = .value, y = condition)) +
    geom_vline(data = filter(df.strategy_by_trial, method=="bh"), aes(xintercept = .value), color = col_bh) +
   geom_vline(data = filter(df.strategy_by_trial, method=="uncorrected"), aes(xintercept = .value), color = col_uncorrected) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FDR"), aes(xintercept = xint)) +
-  facet_grid(factor(ntrials) ~ .category, space = "free_x")   + # space = "free_x"
+  facet_grid(factor(ntrials) ~ .category, space = "free_x")   + # space = "free_x" 
+  xlab("") + ylab("Display") + 
   theme_classic()
 
 ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf", 

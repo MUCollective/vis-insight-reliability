@@ -314,8 +314,24 @@ FDR's for combinations of method (uncorrected and B-H) and number of regions/hyp
 
 Compute average marginal effects (AMEs) for `nregions`, and compare against simulated FDR's. Colors from https://coolors.co/393d3f-c98ca7-e76d83-f5b700-a5c4d4 
 
+The average participant
+
+
 ```{r}
-(ame_nregions <- draws.fit %>%
+avg_participant_fits <- data_grid(df, condition, nesting(ntrials, nregions), adj_trial_id, prolific_pid = "neu") %>%
+  add_fitted_draws(fit, allow_new_levels = TRUE) %>% 
+  ungroup() %>%
+  mutate(
+    .category = toupper(as.character(.category)),
+    .value = .value / ntrials,
+    condition = factor(condition, levels = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean")),
+    trial_id = round((adj_trial_id + 1)*35)
+  )
+```
+
+
+```{r}
+(ame_nregions <- avg_participant_fits %>%
   pivot_wider(names_from = .category, values_from = .value) %>%
   mutate(FDR = FP / (FP + TP)) %>%
   group_by(ntrials, .draw) %>%
@@ -323,7 +339,7 @@ Compute average marginal effects (AMEs) for `nregions`, and compare against simu
   median_qi()
 )
 
-ame_draws<- draws.fit %>%
+ame_draws<- avg_participant_fits %>%
   pivot_wider(names_from = .category, values_from = .value) %>%
   mutate(FDR = FP / (FP + TP)) %>%
   group_by(condition, ntrials, .draw) %>%
@@ -337,7 +353,7 @@ ame_draws<- draws.fit %>%
                                 `HOPs-mean` = "hops_mean"))
 
 
-(ame_draws_bytrial <- draws.fit %>%
+(ame_draws_bytrial <- avg_participant_fits %>%
   pivot_wider(names_from = .category, values_from = .value) %>%
   mutate(FDR = FP / (FP + TP)) %>%
     filter(trial_id %in% c(1, 70)) %>%
@@ -357,6 +373,9 @@ ame_draws<- draws.fit %>%
 Visualizing the confusion matrix plus FDR, with participant response means
 
 Colors: https://coolors.co/27187e-758bfd-aeb8fe-f5b700-f1f2f6
+
+
+
 
 ```{r}
 participant_means <- df %>%
@@ -390,6 +409,21 @@ ame_draws %>% ggplot(aes(x = .value, y = condition)) +
 ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf", 
        width = 12, height = 4, device=cairo_pdf)
 
+```
+Individual plot for FP
+
+```{r}
+ame_draws %>% 
+  filter(.category == "FP") %>%
+  ggplot(aes(x = .value, y = condition)) + 
+  stat_ccdfinterval(fill = "#EBEBEB", color = "#393D3F") + 
+  geom_point(data = participant_means %>% filter(.category == "FP"), shape = 21, color = "#F5B700", fill = "#F5B700")+#758BFD
+   geom_vline(data = filter(df.strategy_by_trial, method=="bh" & .category == "FP"), aes(xintercept = .value), color = col_bh)+ 
+  geom_vline(data = filter(df.strategy_by_trial, method=="uncorrected" & .category == "FP"), aes(xintercept = .value), color = col_uncorrected) +
+  facet_grid(. ~ factor(ntrials) , space = "free_x")   + # space = "free_x" 
+  xlab("") + ylab("Display") + 
+  xlim(c(0, NA)) + 
+  theme_classic()
 ```
 
 ```{r}

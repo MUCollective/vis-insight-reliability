@@ -19,6 +19,7 @@ knitr::opts_chunk$set(message = FALSE)
 library(tidyverse)
 library(rstan)
 library(brms)
+library(furrr)
 library(modelr)
 library(tidybayes)
 
@@ -329,6 +330,19 @@ avg_participant_fits <- data_grid(df, condition, nesting(ntrials, nregions), adj
   )
 ```
 
+```{r}
+# memory eater
+
+plan(multisession, workers = 1)
+options <- furrr_options(seed = 32)
+
+(split_fit <-
+  data_grid(df, condition, nesting(ntrials, nregions, prolific_pid), adj_trial_id)  %>%
+  group_by(nregions, condition) %>%
+  group_split() %>%
+  future_map_dfr(~add_fitted_draws(., fit), .options = options, .progress = TRUE )
+)
+```
 
 ```{r}
 (ame_nregions <- avg_participant_fits %>%

@@ -2,13 +2,13 @@
 title: "Analysis for `Odds and Insights: Do Uncertainty Visualisations Improve Qualityof Decisions in Visual Analysis` "
 date: '`r Sys.time()`'
 output:  
-  pdf_document:
-    keep_tex: yes
-#  html_document:
-#    toc: yes
-#    toc_depth: 3
-#    toc_float: true
-#    theme: spacelab
+  # pdf_document:
+    # keep_tex: yes
+ html_document:
+   toc: yes
+   toc_depth: 3
+   toc_float: true
+   theme: readable
 ---
 
 ```{r setup}
@@ -255,7 +255,7 @@ test.statistics <- predicted.fit %>%
   summarise( .prediction = mean(.prediction) )
 ```
 
-```{r predicted-draws-pp-check, eval = FALSE, fig.width = 6, fig.height = 3}
+```{r predicted-draws-pp-check-1, eval = FALSE, fig.width = 6, fig.height = 3}
 test.statistics %>%
   filter(ntrials == 12) %>%
   ggplot(aes(.prediction)) +
@@ -313,26 +313,10 @@ FDR's for combinations of method (uncorrected and B-H) and number of regions/hyp
    arrange(ntrials, method))
 ```
 
-Compute average marginal effects (AMEs) for `nregions`, and compare against simulated FDR's. Colors from https://coolors.co/393d3f-c98ca7-e76d83-f5b700-a5c4d4 
-
-The average participant
+Compute average marginal effects (AMEs) for `nregions` and `condition` from posterior retrodictive, and compare against simulated FDR's. Colors from https://coolors.co/393d3f-c98ca7-e76d83-f5b700-a5c4d4 
 
 
-```{r}
-avg_participant_fits <- data_grid(df, condition, nesting(ntrials, nregions), adj_trial_id, prolific_pid = "neu") %>%
-  add_fitted_draws(fit, allow_new_levels = TRUE) %>% 
-  ungroup() %>%
-  mutate(
-    .category = toupper(as.character(.category)),
-    .value = .value / ntrials,
-    condition = factor(condition, levels = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean")),
-    trial_id = round((adj_trial_id + 1)*35)
-  )
-```
-
-
-
-```{r}
+```{r, eval=FALSE}
 # memory eater - peak memory on 12 cores was ~ 34GB, you may want to reduce workers if you have less ram or cores
 plan(multisession, workers = 2)
 options <- furrr_options(seed = 32)
@@ -371,53 +355,13 @@ ame_draws <- df %>%
                            `HOPs-mean` = "hops_mean"
     )
   )
+
+saveRDS(ame_draws, file = "ame_draws.rds")
 ```
+
 ```{r}
-# saveRDS(ame_draws, file = "ame_draws.rds")
 ame_draws <- readRDS("ame_draws.rds")
 ```
-
-```{r}
-# (ame_nregions <- avg_participant_fits %>%
-#   pivot_wider(names_from = .category, values_from = .value) %>%
-#   mutate(FDR = FP / (FP + TP)) %>%
-#   group_by(ntrials, .draw) %>%
-#   summarize(across(FDR, mean), .groups = "drop_last") %>%
-#   median_qi()
-# )
-# 
-# ame_draws<- avg_participant_fits %>%
-#   pivot_wider(names_from = .category, values_from = .value) %>%
-#   mutate(FDR = FP / (FP + TP)) %>%
-#   group_by(condition, ntrials, .draw) %>%
-#   summarize(across(TP:FDR, mean), .groups = "drop_last") %>%
-#   pivot_longer(TP:FDR, names_to = ".category", values_to = ".value")  %>% 
-#   mutate(.category = factor(.category, levels = c("TP", "TN", "FP", "FN", "FDR"))) %>%
-#   mutate(condition = factor(condition, levels = c("dotplot", "halfeye", "hops_mean", "hops_bootstrap", "ci", "raw_data"))) %>%
-#   mutate(condition = fct_recode(condition, PDF = "halfeye", 
-#                                 baseline = "raw_data", CI = "ci", 
-#                                 `HOPs-b` = "hops_bootstrap",
-#                                 `HOPs-mean` = "hops_mean"))
-# 
-# 
-# (ame_draws_bytrial <- avg_participant_fits %>%
-#   pivot_wider(names_from = .category, values_from = .value) %>%
-#   mutate(FDR = FP / (FP + TP)) %>%
-#     filter(trial_id %in% c(1, 70)) %>%
-#   group_by(condition, ntrials, trial_id, .draw) %>%
-#   summarize(across(TP:FDR, mean), .groups = "drop_last")
-# )
-# this version looks similar but gives slightly different results
-# draws.fit %>%
-#   group_by(ntrials, .draw, .category) %>%
-#   summarise(.value = mean(.value), .groups = "drop") %>%
-#   pivot_wider( names_from = .category, values_from = .value ) %>%
-#   mutate( fp_rate = FP / (FP + TP)) %>% 
-#   group_by(ntrials) %>%
-#   median_qi(fp_rate)
-```
-
-Visualizing the confusion matrix plus FDR, with participant response means
 
 Colors: https://coolors.co/27187e-758bfd-aeb8fe-f5b700-f1f2f6
 
@@ -474,20 +418,7 @@ ame_draws %>%
   theme_classic()
 ```
 
-```{r}
-ame_nregions %>%
-  right_join(simulated_FDRs, by = "ntrials", suffix = c(".participant", ".simulated")) %>%
-  mutate(FDR.delta = FDR.participant - FDR.simulated) %>%
-  select(ntrials, method, starts_with("FDR")) 
 
-ame_nregions %>%
-  right_join(simulated_FDRs, by = "ntrials", suffix = c(".participant", ".simulated")) %>%
-  mutate(FDR.delta = FDR.participant - FDR.simulated) %>%
-  select(ntrials, method, starts_with("FDR")) %>%
-  group_by(method) %>%
-  mutate(across(starts_with("FDR"), ~ . - lag(.)))
-
-```
 
 In the figure below, we see that, on average, the FDR decreases for participants when presented with more graphs. This suggests that they are likely performing some form of implicit multiple comparisons correction. 
 
@@ -715,7 +646,7 @@ dev.off()
 Before we compare the composite scores, we look at the potential learning effects in our primary research questions. In repeated measures experimental designs such as this, where we also provide participants feedback (in the first 5 trials in each block), we might expect to see some learning effect (or at least variation in the responses over the course of the trials). In the figure below, we plot the change in the probability of TP/TN/FP/FN in each condition.
 
 
-```{r, 08-probs-vis-learning, fig.width = 8, fig.height = 5}
+```{r, 08-probs-vis-learning-1, fig.width = 8, fig.height = 5}
 df.design <- crossing(condition = c("raw_data", "ci", "dotplot", "halfeye", "hops_bootstrap", "hops_mean"), ntrials = c(8, 12)) %>%
   mutate(ntrials = as.integer(ntrials))
 
@@ -910,7 +841,7 @@ draws.fit %>%
 
 Next, comparing the difference in F-scores between different uncertainty representations, we see that all the uncertainty representations, except HOPs of bootstrapped data samples reliably increase F-scores. In other words, the accuracy increases when these uncertainty representations are used. Interestingly, the dotplot results in the highest accuracy (by almost 15 percentage points, 95% CI: [0.08, 0.2]) compared to the Baseline. Other uncertainty representations such as `probability density plots`, `HOPS` and `95% confidence intervals` of the mean difference also improves the F-scores.
 
-```{r}
+```{r eval=FALSE}
 pdf(file = "../figures/figures-paper/12-fscore-vis-1.pdf", useDingbats = FALSE, width = 6, height = 7)
 p1.fscore
 dev.off()

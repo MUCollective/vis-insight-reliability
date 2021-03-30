@@ -1,7 +1,6 @@
 ---
 title: "Data cleaning and wrangling for \"Odds and Insights: Do Uncertainty Visualisations Improve Qualityof Decisions in Visual Analysis\""
 date: '`r Sys.time()`'
-author: "Abhraneel Sarma"
 output:
   html_document:
     toc: yes

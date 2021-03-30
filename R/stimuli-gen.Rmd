@@ -1,6 +1,5 @@
 ---
 title: 'Stimuli data generation'
-author: "Abhraneel Sarma"
 date: "10/28/2019"
 output: html_document
 ---

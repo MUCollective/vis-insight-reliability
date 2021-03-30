@@ -1,7 +1,6 @@
 ---
 title: "Analysis for `Odds and Insights: Do Uncertainty Visualisations Improve Qualityof Decisions in Visual Analysis` "
 date: '`r Sys.time()`'
-author: "Abhraneel Sarma"
 output:  
   pdf_document:
     keep_tex: yes
@@ -334,7 +333,7 @@ avg_participant_fits <- data_grid(df, condition, nesting(ntrials, nregions), adj
 
 ```{r}
 # memory eater - peak memory on 12 cores was ~ 34GB, you may want to reduce workers if you have less ram or cores
-plan(multisession, workers = 12)
+plan(multisession, workers = 2)
 options <- furrr_options(seed = 32)
 
 ame_draws <- df %>%
@@ -342,20 +341,20 @@ ame_draws <- df %>%
   group_by(nregions, condition) %>%
   group_split() %>%
   future_map_dfr(~ 
-    # we do this part (including the marginalization step -- i.e. the summarise())
-    # within the smallest cell of the cross product of the 
-    # predictors that we will marginalize within so that we don't have to
-    # hold the full gigantic table in memory prior to marginalization
-    add_fitted_draws(., fit) %>%
-      mutate(
-        .category = toupper(as.character(.category)),
-        .value = .value / ntrials
-      ) %>%
-      pivot_wider(names_from = .category, values_from = .value) %>%
-      mutate(FDR = FP / (FP + TP)) %>%
-      group_by(condition, ntrials, .draw) %>%
-      summarize(across(TP:FDR, mean), .groups = "drop_last")
-    , .options = options, .progress = TRUE
+                   # we do this part (including the marginalization step -- i.e. the summarise())
+                   # within the smallest cell of the cross product of the 
+                   # predictors that we will marginalize within so that we don't have to
+                   # hold the full gigantic table in memory prior to marginalization
+                   add_fitted_draws(., fit) %>%
+                   mutate(
+                     .category = toupper(as.character(.category)),
+                     .value = .value / ntrials
+                   ) %>%
+                   pivot_wider(names_from = .category, values_from = .value) %>%
+                   mutate(FDR = FP / (FP + TP)) %>%
+                   group_by(condition, ntrials, .draw) %>%
+                   summarize(across(TP:FDR, mean), .groups = "drop_last")
+                 , .options = options, .progress = TRUE
   ) %>%
   pivot_longer(TP:FDR, names_to = ".category", values_to = ".value") %>%
   mutate(
@@ -364,13 +363,17 @@ ame_draws <- df %>%
       levels = c("dotplot", "halfeye", "hops_mean", "hops_bootstrap", "ci", "raw_data")
     ),
     condition = fct_recode(condition,
-      PDF = "halfeye", 
-      baseline = "raw_data",
-      CI = "ci", 
-      `HOPs-b` = "hops_bootstrap",
-      `HOPs-mean` = "hops_mean"
+                           PDF = "halfeye", 
+                           baseline = "raw_data",
+                           CI = "ci", 
+                           `HOPs-b` = "hops_bootstrap",
+                           `HOPs-mean` = "hops_mean"
     )
   )
+```
+```{r}
+# saveRDS(ame_draws, file = "ame_draws.rds")
+ame_draws <- readRDS("ame_draws.rds")
 ```
 
 ```{r}
@@ -418,8 +421,6 @@ Visualizing the confusion matrix plus FDR, with participant response means
 Colors: https://coolors.co/27187e-758bfd-aeb8fe-f5b700-f1f2f6
 
 
-
-
 ```{r}
 participant_means <- df %>%
   mutate(ntrials = as.numeric(as.character(nregions))) %>%
@@ -439,7 +440,9 @@ participant_means <- df %>%
   mutate(.category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR"))) 
 
 
-ame_draws %>% ggplot(aes(x = .value, y = condition)) + 
+ame_draws %>% 
+  mutate(.category = factor(.category, levels = c("TP", "TN", "FP", "FN", "FDR"))) %>%
+  ggplot(aes(x = .value, y = condition)) + 
   stat_ccdfinterval(fill = "#EBEBEB", color = "#393D3F") + 
   geom_point(data = participant_means, shape = 21, color = "#F5B700", fill = "#F5B700")+#758BFD
    geom_vline(data = filter(df.strategy_by_trial, method=="bh"), aes(xintercept = .value), color = col_bh) +
@@ -453,6 +456,7 @@ ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf",
        width = 12, height = 4, device=cairo_pdf)
 
 ```
+
 Individual plot for FP
 
 ```{r}

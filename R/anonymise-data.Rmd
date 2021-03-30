@@ -1,6 +1,5 @@
 ---
 title: "anonymise-data"
-author: "Abhraneel Sarma"
 date: "3/11/2021"
 output: html_document
 ---

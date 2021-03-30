@@ -1,6 +1,5 @@
 ---
 title: "Unused"
-author: "Xiaoying Pu"
 date: "5/15/2019"
 output: html_document
 ---

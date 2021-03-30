@@ -120,6 +120,8 @@ finding_payout <- function(alpha, p_null){
       sigma = mu0 / delta,
       p_raw = map2_dbl(mu, sigma, ~rp(.x, .y)), 
       p_bh = p.adjust(p_raw, method = "BH"),
+      p_bonf = p.adjust(p_raw, method = "bonferroni"),
+
     ) %>%
     pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
     mutate(
@@ -172,96 +174,27 @@ saveRDS(sim_df, "sim_n1000_alpha_pnull_delta_seed32.rds")
 
 
 ```{r}
-sim_df <- readRDS("sim_n1000_alpha_pnull_delta_seed32.rds")
+sim_df <- readRDS("sim_n1000_alpha_pnull_delta_seed32.rds") %>%
+  mutate(method = fct_recode(method, Uncorrected = "p_raw", Bonferroni = "p_bonf", `Benjamini-Hochberg` = "p_bh"))
 ```
 
 ### Results
 
-
-See where "Rejecting" gives greater payout than "not rejecting" on the $\alpha$ scale
-
-```{r}
-sim_df %>%
-  group_by(nregions, method, delta, alpha) %>%
-  summarize(E_ineq = mean(E_ineq)) %>%
-  ggplot(aes(alpha, E_ineq)) + 
-  geom_point(aes(color = delta)) + 
-  theme_minimal() + 
-  scale_color_viridis_c() +
-  facet_grid(nregions ~ method) +
-  geom_hline(aes(yintercept = 0))
-```
-
-
-
-The rest
-
+Benjamini-Hochberg gives the highest payout around P(null) = 0.5 at $\alpha = 0.05$
 
 ```{r}
 sim_df %>% 
-  ggplot(aes(p_null, E_pay, color = alpha)) + 
-  geom_point(alpha = 0.2) + 
-  geom_line(data = sim_df %>% filter(alpha == 0.05)) + 
-  facet_grid(nregions ~ method + delta) + 
-  scale_color_viridis_c() + 
-  theme_minimal()  +
-  labs(title = "Which alpha maximizes payout?", subtitle = "Line drawn at alpha = 0.05")
-```
-
-
-```{r}
-sim_df %>% 
-  filter(alpha < 0.2 & method != "p_raw") %>%
-  ggplot(aes(p_null, E_pay, color = alpha)) + 
-  geom_point(alpha = 0.2) + 
-  geom_line(data = sim_df %>% filter(alpha == 0.05 & method != "p_raw")) + 
-  facet_grid(nregions ~ method + delta) + 
-  scale_color_viridis_c() + 
-  theme_minimal()  +
-  labs(title = "Which alpha maximizes payout?", subtitle = "Line drawn at alpha = 0.05")
-```
-  
-```{r}
-sim_df %>% 
-  filter(alpha < 0.05) %>%
-  ggplot(aes(alpha, E_pay, color = p_null)) + 
-  # geom_point(alpha = 0.2) +
-  geom_line(aes(group = p_null), alpha = 0.5)  +
-  # geom_line(data = sim_df %>% filter(p_null %in% c(0.025, 0.475, 0.975)), aes(group = p_null)) + 
-  facet_grid(nregions ~ method + delta) + 
-  scale_color_viridis_c() + 
-  theme_minimal() +
-  labs(title = "Which alpha maximizes payout?", subtitle = "alpha = 0.02 ~ 0.04")
-```
-
-```{r}
-sim_df %>% 
-  group_by(nregions, delta, method, alpha) %>%
-  summarize(E_pay = mean(E_pay)) %>%
-  ggplot(aes(alpha, E_pay, color = method)) + 
-  geom_point(aes(group = p_null), alpha = 0.5)  +
+  filter(alpha == 0.05) %>%
+  ggplot(aes(x = p_null, y = E_pay, color = method)) +
+  geom_line() + 
   facet_grid(nregions ~ delta) + 
-  scale_color_viridis_d() + 
-  theme_minimal()  + 
-  labs(title = "At which alpha is B-H better than RAW")
+  labs(title = "Which (multiple comparisons) correction method gives higher payout")
 ```
-```{r}
 
-sim_df %>%
-  group_by(alpha, nregions, method, delta) %>% # average out P(null)
-  summarize(E_pay_mean = mean(E_pay), .groups = "drop") %>%
- ggplot(aes(x = alpha, y = E_pay_mean, color = factor(delta))) + 
-  geom_point() + 
-  facet_grid(nregions ~ method) + 
-  geom_vline(aes(xintercept = 0.05)) + 
-  scale_color_viridis_d() + 
-  theme_minimal() 
-
-```
+Checking the incentives: we pllot the $\alpha$ value where payout is the highest, and see how close it is to 0.05 under different strategies.
 
 ```{r}
 sim_df %>%
-  # filter(p_null %in% c(0.475, 0.525)) %>%
   group_by(alpha, nregions, method, delta) %>% # average out P(null)
   summarize(E_pay_mean = mean(E_pay), .groups = "drop")  %>% 
   group_by(nregions, method, delta) %>%
@@ -272,11 +205,11 @@ sim_df %>%
   geom_hline(aes(yintercept = 0.05), color = "slategray3") +
   facet_grid(nregions ~ method) + 
   theme_minimal() + 
-  labs(title = "The alphas that maximizes E[payout] for three (delta=mu/sigma)'s and nregions",
+  labs(title = "The alphas that maximizes E[payout] for three deltas and nregions",
        subtitle = "Averaged over a uniform P(null) distribution")
 ```
 
-
+### Other explorations
 
 
 ```{r}
@@ -285,10 +218,10 @@ sim_df %>%
   geom_point(alpha = 0.2) + 
   geom_line(data = sim_df %>% filter(p_null == 0.475)) +
   geom_abline(aes(intercept = 0, slope = 1)) + 
-  facet_grid(. ~ method + delta) + 
+  facet_grid(delta ~ method) + 
   scale_color_viridis_c() + 
   theme_minimal() + 
-  labs(title = "FDR under B-H and raw strategy", subtitle = "Diagonal line is alpha = FDR, colored line at P(null) = 0.5")
+  labs(title = "FDR under different", subtitle = "Diagonal line is alpha = FDR, colored line at P(null) = 0.5")
 ```
 
 
@@ -304,7 +237,9 @@ sim_df %>%
   labs(title="Power is higher without correction", subtitle = "A bunch of NA's for when P(null) is high")
 ```
 
-## Comparing simulation to experimental stimuli data
+## Comparing stimuli data to alternative datasets drawn from the same data generating process
+
+For Section 5.3 Limitations
 
 
 ```{r}
@@ -389,115 +324,36 @@ stimuli_alldelta_df <-  expand.grid(alpha = alphas) %>%
   map_dfr(~ cbind(.x, stimuli_alldelta_fn(df_stimuli, .$alpha), row.names = NULL))
 ```
 
-
-```{r}
-stimuli_alldelta_df %>%
-  filter(alpha == 0.05) %>%
-  mutate(across(tp:fn, ~ . / nregions))
-```
+Table of confusion matrix categories from stimuli data, under two strategies
 
 
 
 ```{r}
 (stimuli_fdr_plot_df <- stimuli_alldelta_df %>%
   filter(alpha == 0.05) %>%
-  select(-pay)
+  select(-pay) %>% 
+  mutate(method = fct_recode(method, Uncorrected = "p_raw",  `Benjamini-Hochberg` = "p_bh"))
+
 )
 
-stimuli_fdr_plot_df %>%
-  ggplot(aes(x = fdr, y = factor(nregions), color = method)) + 
-  geom_point() + 
-  # geom_hline(aes(yintercept = 1)) + 
-  # geom_hline(aes(yintercept = 2)) + 
-  geom_text(aes(label =(format(round(fdr, 3), nsmall = 3))), nudge_y = 0.2) + 
-  theme_minimal() +
-  xlim(c(0,.1)) + 
-  xlab("E[FDR]")  +
-  ylab("nregions") + 
-  scale_color_manual(    labels = c("Benjamini\n-Hochberg", "Uncorrected"),
-    values = c("#bb3133", "#279e92"))  # + theme(legend.position = "none")
-
-
-# ggsave("fdr_simulation.pdf", device = cairo_pdf, width = 4.5, height = 4.5/2)
 ```
 
 
 
-```{r}
-(p1 <- stimuli_alpha_df %>%
-  ggplot(aes(alpha, E_pay)) + 
-  geom_point() + 
-   geom_vline(aes(xintercept = 0.05), color = "red") + 
-  facet_grid(nregions ~ method + delta) +
-  scale_color_viridis_c() + 
-  theme_minimal() +
-  labs(title = "t-test on experiment stimuli", subtitle = "P(null) = 0.5")
-)
-```
-
-```{r}
-(p2 <- sim_df %>% 
-  filter(p_null < 0.46 & p_null > 0.45) %>%
-  ggplot(aes(alpha, E_pay)) + 
-  # geom_point(alpha = 0.2) +
-  geom_point()  +
-  # geom_line(data = sim_df %>% filter(p_null %in% c(0.025, 0.475, 0.975)), aes(group = p_null)) + 
-  facet_grid(nregions ~ method + delta) + 
-  scale_color_viridis_c() + 
-  theme_minimal() +
-  labs(title = "Simulation results")
-)
-```
-
-```{r}
-# p1 + p2 
-  bind_rows("stimuli" = stimuli_alpha_df, "simulated" = sim_df %>% filter(p_null < 0.55 & p_null > 0.45), .id = "source") %>%
-  ggplot(aes(x = alpha, y = E_pay)) + 
-  geom_point(aes(color = source), alpha = 0.3)  + 
-  facet_grid(nregions ~ method + delta) + 
-  theme_minimal()
-```
-
-## Normative FDR for different number of hypotheses
-
-
-For the discussion section
 
 
 ```{r}
 (p3 <- sim_df %>% 
-  filter(alpha == 0.05) %>%
-  # group_by(method, delta, nregions) %>%
-  # summarize(mean_fdr = mean(E_fdr),
-  #           ci = 1.96 * sd(E_fdr)/sqrt(n())) %>%
+  filter(alpha == 0.05 & method != "Bonferroni") %>%
   ggplot(aes(x = E_fdr, y = factor(nregions))) +
   geom_vline(aes(xintercept = 0.05)) +
-   # stat_pointinterval(aes( x = E_fdr, y = factor(nregions))) + 
    geom_point(alpha = 0.4) +
    geom_point(data = stimuli_fdr_plot_df, mapping = aes(x = fdr, y = factor(nregions), color = factor(nregions))) +
    # geom_segment(data = stimuli_fdr_plot_df, mapping = aes(x = ))
   facet_grid(method ~ delta) + 
    # xlim(c(0, 0.1)) +
-  labs(title= glue("Dot and whisker: simulated data, {n_iter} iterations, dot: stimuli"))
+  labs(title= glue("Black dots: simulated data wuth {n_iter} iterations, colored dots: stimuli"))
 )
 ```
 
-
-
-```{r}
-(p4 <- 
-stimuli_alpha_df %>% 
-  filter(alpha == 0.05) %>%
-  # filter(method == "p_bh") %>%
-  ggplot(aes(x = E_fdr, y = factor(nregions))) +
-  geom_point() + 
-  geom_vline(aes(xintercept = 0.05)) +
-  facet_grid(method ~ delta) +
-  labs(title = "With experimental stimuli, equiv to one iteration")
-)
-  
-```
-```{r}
-p3 /p4
-```
 

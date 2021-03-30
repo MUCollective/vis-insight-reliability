@@ -472,9 +472,10 @@ For the discussion section
   #           ci = 1.96 * sd(E_fdr)/sqrt(n())) %>%
   ggplot(aes(x = E_fdr, y = factor(nregions))) +
   geom_vline(aes(xintercept = 0.05)) +
-   stat_pointinterval(aes( x = E_fdr, y = factor(nregions))) + 
-   # geom_point(alpha = 0.4) + 
+   # stat_pointinterval(aes( x = E_fdr, y = factor(nregions))) + 
+   geom_point(alpha = 0.4) +
    geom_point(data = stimuli_fdr_plot_df, mapping = aes(x = fdr, y = factor(nregions), color = factor(nregions))) +
+   # geom_segment(data = stimuli_fdr_plot_df, mapping = aes(x = ))
   facet_grid(method ~ delta) + 
    # xlim(c(0, 0.1)) +
   labs(title= glue("Dot and whisker: simulated data, {n_iter} iterations, dot: stimuli"))

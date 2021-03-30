@@ -1,6 +1,5 @@
 ---
 title: "Introductory plots for Visualization insights project"
-author: "Abhraneel Sarma"
 date: "3/11/2020"
 output: html_document
 ---

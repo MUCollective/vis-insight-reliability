@@ -1,6 +1,5 @@
 ---
 title: "Data generation"
-author: "Xiaoying Pu"
 date: "2/11/2019"
 output: html_document
 ---

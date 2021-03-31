@@ -1,5 +1,5 @@
 ---
-title: "Analysis for `Odds and Insights: Do Uncertainty Visualisations Improve Qualityof Decisions in Visual Analysis` "
+title: "Analysis for Odds and Insights: Do Uncertainty Visualisations Improve Quality of Decisions in Visual Analysis"
 date: '`r Sys.time()`'
 output:  
   # pdf_document:
@@ -25,27 +25,16 @@ library(tidybayes)
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
 
-theme_set(theme_minimal()) +
-  theme(
-    axis.text = element_text(size = 12),
-    axis.title = element_text(size = 14),
-    axis.text.y = element_blank(),
-    axis.title.y = element_blank(),
-    strip.text = element_text(size = 14),
-    panel.spacing = unit(4, "lines")#
-  )
+# theme_set(theme_minimal()) +
+#   theme(
+#     axis.text = element_text(size = 12),
+#     axis.title = element_text(size = 14),
+#     axis.text.y = element_blank(),
+#     axis.title.y = element_blank(),
+#     strip.text = element_text(size = 14),
+#     panel.spacing = unit(4, "lines")#
+#   )
 ```
-
-
-## Overview
-
-- Recruiting platform: Prolific
-  - study code 29ABE0A0
-  - base pay: $7
-  - estimated time: 40 min
-- Study website: https://mucollective.github.io/vis-insights-study/
-- Database at AWS
-- Exit survey at Qualtrics
 
 
 ## Exploratory analysis

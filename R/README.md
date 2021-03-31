@@ -1,6 +1,6 @@
 # Analysis for _Odds and Insights_
 
-The two R markdowns referenced in the paper (also see namesake html for a prettier view):
+The two R markdowns referenced in the paper (also see the namesake htmls for a prettier view):
 
 - `analysis-final-study.Rmd`: contains the statistical modeling results and power analysis. 
   - Model diagnostics

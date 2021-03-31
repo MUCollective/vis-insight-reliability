@@ -21,10 +21,6 @@ rstan_options(auto_write = TRUE)
 # Summary
 
 - Recruiting platform: Prolific
-  - study code 29ABE0A0
-  - base pay: $7
-  - estimated time: 40 min
-- Study website: https://mucollective.github.io/vis-insights-study/
 - Database at AWS
 - Exit survey at Qualtrics
 

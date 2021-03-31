@@ -1,5 +1,7 @@
 # Study materials for _Odds and Insights_
 
+Anonymized OSF link: https://osf.io/xtsfz/?view_only=22b9e22501eb42c2ab1afea459973861
+
 
 ## Overview of the repository
 

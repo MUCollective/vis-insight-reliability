@@ -374,7 +374,8 @@ participant_means <- df %>%
   mutate(.category = factor(toupper(.category), levels = c("TP", "TN", "FP", "FN", "FDR"))) 
 
 
-ame_draws %>% 
+ame_draws %>%
+ # draws.fit %>% 
   mutate(.category = factor(.category, levels = c("TP", "TN", "FP", "FN", "FDR"))) %>%
   ggplot(aes(x = .value, y = condition)) + 
   stat_ccdfinterval(fill = "#EBEBEB", color = "#393D3F") + 
@@ -389,6 +390,24 @@ ame_draws %>%
 ggsave("analysis-final-study_files/figure-latex/viscond-nregions-tp-fdr.pdf", 
        width = 12, height = 4, device=cairo_pdf)
 
+```
+
+
+```{r scatterplot-for-bias}
+ame_draws %>%
+  filter(.category != "FDR") %>%
+  mutate(.category = factor(.category, levels = c("TP", "TN", "FP", "FN"))) %>%
+  group_by(condition, ntrials, .category) %>%
+  summarize(retrodictive = mean(.value)) %>%
+  left_join(participant_means, by = c("condition", "ntrials", ".category")) %>%
+  ggplot(aes(retrodictive, .value)) +
+  geom_point(aes(color = .category)) +
+  geom_abline(slope = 1, intercept = 0) +
+  facet_grid(. ~ ntrials) +
+  ylab("Participant mean") +
+  theme_classic() +
+  labs(title = "Posterior retrodictives vs. participant response means show no consistent bias")  +
+  coord_fixed()
 ```
 
 Individual plot for FP
@@ -411,19 +430,24 @@ ame_draws %>%
 
 In the figure below, we see that, on average, the FDR decreases for participants when presented with more graphs. This suggests that they are likely performing some form of implicit multiple comparisons correction. 
 
-```{r 03-fdr-nregions, fig.width = 8, fig.height = 2}
-p1.fdr <- draws.fit %>%
+```{r 03-fdr-nregions, fig.width = 8, fig.height = 3.2}
+(p1.fdr <- draws.fit %>%
   group_by(ntrials, .draw, .category) %>%
   summarise(.value = mean(.value), .groups = "drop") %>%
   pivot_wider( names_from = .category, values_from = .value ) %>%
   mutate( fp_rate = FP / (FP + TP)) %>%
-  ggplot(aes(x = fp_rate, y = factor(ntrials))) +
-  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  ggplot(aes(x = fp_rate, y = factor(ntrials, levels = c("12", "8")))) +
+  stat_halfeye(.width = c(.95, .8, .5)) +
   geom_text(data = data.bh.fdr, aes(x = FDR, y = factor(ntrials)), label = "|", size = 8, color = col_bh) +
   geom_text(data = data.raw.fdr, aes(x = FDR, y = factor(ntrials)), label = "|", size = 8, colour = col_uncorrected) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
   labs(x = "False Discovery Rate", y = "Number of graphs shown") +
-  scale_x_continuous(limits = c(0, 0.2), breaks = seq(-0.2, 0.2, by = 0.04))
+  scale_x_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, by = 0.05)) +
+  theme_classic() + 
+  theme( panel.grid.major.y = element_line())
+)
+# ggsave("figures/figures-paper/03-fdr-nregions-1-chi.pdf", width = 8, height = 3.2)
+
 
 p2.fdr <- draws.fit %>%
   group_by(ntrials, .draw, .category) %>%
@@ -458,19 +482,24 @@ We see that the decrease in the False Discovery Rate is, on average, a magnitude
 
 Next, since we have different visualization conditions, we inspect if this difference is persistent across all the conditions. From the following figure below, we see that the FDR decreases for participants consistently across all the uncertainty representations, suggesting that it is likely not an artifact of certain forms of visual representations. The magnitude of this decrease appears to be consistent across the different uncertainty representations as well.
 
-```{r 04-fdr-nregions-by-vis, fig.width = 8, fig.height = 4}
+{r 04-fdr-nregions-by-vis, fig.width = 8, fig.height = 4}
+
+```{r 04-fdr-nregions-by-vis}
 draws.fit %>%
   group_by(ntrials, .draw, .category, condition) %>%
   summarise(.value = mean(.value), .groups = "drop") %>%
   pivot_wider( names_from = .category, values_from = .value ) %>%
   mutate( fp_rate = FP / (FP + TP)) %>%
   ggplot(aes(x = fp_rate, y = factor(ntrials))) +
-  geom_halfeyeh(.width = c(.95, .8, .5)) +
+  # geom_halfeyeh(alpha = 0.5,  .width = c(.95, .8, .5)) +
+  geom_halfeyeh(alpha = 0.5,  .width = c(.95)) +
   geom_text(data = data.raw.fdr, aes(x = FDR, y = factor(ntrials)), label = "|", size = 8, colour = col_uncorrected) +
   geom_text(data = data.bh.fdr, aes(x = FDR, y = factor(ntrials)), label = "|", size = 8, colour = col_bh) +
   geom_vline(data = data.frame(xint = 0.05, .category = "FP"), aes(xintercept = xint), color = "black", alpha = 0.5) +
   labs(x = "False Discovery Rate", y = "Number of graphs shown") +
-  facet_wrap( ~ condition ) 
+  facet_grid(condition ~ .) + 
+  theme_minimal()
+  # facet_wrap( ~ condition )
 ```
 Thus, our results suggest that users in our experimental set up implicitly perform some form of multiple comparisons correction. Because our experimental design incentivised participants against making False Discoveries proportionate to performing a NHST at a 95% confidence intervals, we cannot tell if participants would always behave this way. We believe that in the absence of incentives, participants may not control for False Positives in a similar manner, as suggested by the results of the study by Zgraggen et al.
 

@@ -588,7 +588,7 @@ draws.fit %>%
   labs(x = "False Discovery Rate", y = "Condition")
 ```
 
-### Calculation of marginalised estimates
+### Calculation of marginalized estimates
 
 ```{r, 08-probs-vis-learning, fig.height = 4, fig.width = 10}
 draws.ci <- draws.fit %>%
@@ -995,6 +995,8 @@ p1
 dev.off()
 ```
 
+
+When $nregions = 12$, our model estimates that there is a 81.1% and 70% probability, respectively, that these two conditions have a positive average payout
 
 ```{r}
 payout_df <- draws.fit %>%

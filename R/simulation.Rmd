@@ -64,7 +64,7 @@ K <- 20          # number of data points in a hypothesis/region
 p_null <- 0.5    # the bane of my existance 
 n_iter <- 1000   # number of iterations in simulation
 alphas <- seq(from = 0.001, to = 0.1, by = 0.001)
-p_nulls <- ppoints(10)
+p_nulls <- 0.5 # ppoints(10)
 fp_penalty <- 19
 ```
 
@@ -165,7 +165,7 @@ plan(multisession, workers = 13)
 options <- furrr_options(seed = 32)
 
 (sim_df <- expand.grid(
-    alpha = alphas,
+    alpha = seq(0, 0.10, length.out = 3),
     p_null = p_nulls
   ) %>%
     split(1:nrow(.)) %>%
@@ -338,9 +338,7 @@ Table of confusion matrix categories from stimuli data, under two strategies
   filter(alpha == 0.05) %>%
   select(-pay) %>% 
   mutate(method = fct_recode(method, Uncorrected = "p_raw",  `Benjamini-Hochberg` = "p_bh"))
-
 )
-
 ```
 
 

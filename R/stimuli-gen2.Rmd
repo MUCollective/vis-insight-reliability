@@ -114,7 +114,7 @@ Next, we need to determine a value for the probability of the null hypothesis be
 We first create the grid of `# comparisons` and `P(null)$ values:
 
 ```{r}
-(data.sample.grid = crossing(n_regions = n_region, p_null = seq(0.1, 0.9, by = 0.1)))
+(data.sample.grid = crossing(n_regions = n_region, p_null = seq(0, 1, by = 0.1)))
 ```
 To this, we add draws from a multivariate uniform distribution which encodes the following two piece of information:
 - whether a store is positive or not (computed as: x > p_null, where x is a random variable)
@@ -182,6 +182,60 @@ data.sample.stats2 = data.sample.stats %>%
   )
 ```
 
+
+### Check generated data
+
+```{r FDR and payout}
+(df_fdr_payout <-
+  data.sample.stats2 %>%
+  group_by(n_regions, p_null, method, trial) %>% 
+  summarize(across(TP:FN, ~ sum(.)), .groups = "drop") %>%
+  mutate(FDR = ifelse((FP + TP), FP / (FP + TP), 0), 
+         payout = TP + TN - FN - (19*FP))  
+)
+```
+
+
+```{r checking BH}
+# average/expected? FDR across the 1000 trials
+df_fdr_payout %>%
+  group_by(n_regions, p_null, method) %>% 
+  summarize(FDR = mean(FDR), .groups = "drop")  %>%
+  filter(method == "BH" & FDR > 0.05)
+```
+
+Using Boole's inequality and the fact that p-value is uniformly distributed when $H_0$ is true.
+
+${\displaystyle {\text{FWER}}=P\left\{\bigcup _{i=1}^{m_{0}}\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}\leq \sum _{i=1}^{m_{0}}\left\{P\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}=m_{0}{\frac {\alpha }{m}}\leq \alpha .}$
+
+
+Is OK if FWER is > 0.05 from the simulation because p-value is uniformly distributed?
+
+```{r checking bonferroni}
+# overall FWER
+df_fdr_payout %>%
+  filter(method == "bonferroni") %>%
+  group_by(n_regions, p_null, trial) %>% 
+  summarize(V = any(FP), .groups = "drop")  %>%
+  summarize(FWER = mean(V), .groups = "drop") 
+
+# by n_regions, p_null
+df_fdr_payout %>%
+  filter(method == "bonferroni") %>%
+  group_by(n_regions, p_null, trial) %>% 
+  summarize(V = any(FP), .groups = "drop_last") %>%
+  summarize(FWER = mean(V), .groups = "drop") %>%
+  filter(FWER > 0.05)
+```
+Check if p-values are uniform under $H_0$ ... sure
+
+```{r}
+data.sample.stats %>%
+  filter(method == "uncorrected", mu == 0) %>%
+  ggplot(aes(x = p)) + 
+  geom_histogram(binwidth = 0.01)
+  
+```
 
 
 ```{r}

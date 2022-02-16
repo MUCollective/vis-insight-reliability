@@ -15,6 +15,7 @@ library(modelr)
 library(tidybayes)
 library(randtoolbox)
 # library(gamlss.dist)
+library(forcats)
 
 # theme_set( theme_light() ) +
 #   theme_update(
@@ -102,7 +103,10 @@ data.sample = crossing(n_regions = n_region, p_null = 1) %>%
             TN = as.integer(!`mu > 0` & !reject_null),
             FN = as.integer(`mu > 0` & !reject_null),
   )
+```
 
+
+```{r}
 data.sample %>%
   summarise(FPR = any(FP), .groups = "drop_last") %>%
   summarise(FPR = mean(FPR), .groups = "drop_last") %>%
@@ -156,8 +160,25 @@ head(data.sample)
 Now that we have actual data for all the 20 store (in each of varying number of regions and values of $p(null)$, over 1000 trials), we can perform a NHST using a one-sided t-test. This will give us an uncorrected p-value. We can then account for multiple comparisons by adjusting the p-values using various correction methods such as Benjamini-Hochberg and Bonferroni:
 
 ```{r}
-data.sample = readRDS("sim_data_sample_n1000.rds")
+data.sample = readRDS("sim_data_sample_n1000.rds") # delta = 1
+```
 
+Maybe the problem with payout is because the $\delta$ this time is larger???
+Last time: $\delta = [0.3, 0.45, 0.6]$
+
+
+ACHTUNG: secretly changing delta
+
+```{r}
+delta <- 0.5
+
+data.sample <- data.sample %>%
+  mutate(data = map2(data, mu, \(x, mu) mu + (x - mu) / delta)) 
+  
+```
+
+
+```{r}
 data.sample.stats = data.sample %>%
   mutate(
     p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value), # calculates p-value
@@ -183,7 +204,7 @@ data.sample.stats2 = data.sample.stats %>%
 ```
 
 
-### Check generated data
+### Check if corrections worked
 
 ```{r FDR and payout}
 (df_fdr_payout <-
@@ -209,7 +230,7 @@ Using Boole's inequality and the fact that p-value is uniformly distributed when
 ${\displaystyle {\text{FWER}}=P\left\{\bigcup _{i=1}^{m_{0}}\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}\leq \sum _{i=1}^{m_{0}}\left\{P\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}=m_{0}{\frac {\alpha }{m}}\leq \alpha .}$
 
 
-Is OK if FWER is > 0.05 from the simulation because p-value is uniformly distributed?
+Is OK if FWER is > 0.05 from the simulation because p-value is uniformly distributed? $P(null) = 0.9$ and 1 are more problematic because ....?
 
 ```{r checking bonferroni}
 # overall FWER
@@ -227,14 +248,38 @@ df_fdr_payout %>%
   summarize(FWER = mean(V), .groups = "drop") %>%
   filter(FWER > 0.05)
 ```
+
 Check if p-values are uniform under $H_0$ ... sure
 
 ```{r}
 data.sample.stats %>%
   filter(method == "uncorrected", mu == 0) %>%
   ggplot(aes(x = p)) + 
-  geom_histogram(binwidth = 0.01)
-  
+  geom_histogram(binwidth = 0.01) + 
+  labs(title = "distribution for p-value under H0")
+```
+ACHTUNG: why high `n_regions` and high `p_null` leads to high FWER/FDR
+
+```{r}
+df_alpha_adj <- tibble(n_regions = n_region) %>%
+  mutate(p_adj = 0.05/ n_region )
+
+data.sample.stats %>%
+  filter(method == "uncorrected", mu == 0) %>%
+  filter(p <= 0.05, n_regions == 16) %>%
+  ggplot(aes(x = p)) + 
+  geom_histogram() + 
+  facet_wrap( ~ p_null, labeller = label_both) +
+  geom_vline(data= df_alpha_adj %>% filter(n_regions == 16), mapping = aes(xintercept = p_adj)) +
+  labs(title = "faceted by P(null)")
+```
+
+```{r}
+data.sample.stats %>%
+  filter(method == "uncorrected") %>%
+  group_by(n_regions, region) %>%
+  slice(3)  %>%
+  arrange(region)
 ```
 
 
@@ -249,6 +294,10 @@ data.sample.stats2 %>%
   facet_wrap( ~ n_regions)
 ```
 
+### check if BH is still the best strategy
+
+Looks like Bonferroni is the better one, 
+
 ```{r}
 data.sample.stats2 %>%
   summarise_at(.vars = vars(TP, FP, TN, FN), sum) %>%
@@ -258,6 +307,41 @@ data.sample.stats2 %>%
   geom_line(aes(x = p_null, y = E_payout, color = method)) +
   facet_wrap( ~ n_regions)
 ```
+Closer look at the FP and payout patterns
+
+```{r}
+df_fdr_payout %>%
+  filter(method != "uncorrected") %>%
+  group_by(n_regions, p_null, method) %>%
+  mutate(across(TP:FN, \(x) x / n_regions, .names = "{.col}R")) %>%
+  summarize(across(FDR:FNR, ~ mean(.))) %>%
+  pivot_longer(cols = FDR:FNR) %>%
+  mutate(name = fct_relevel(name, c("TPR", "FPR", "TNR", "FNR"))) %>%
+  ggplot() +
+  geom_line(aes(p_null, value, color = method, group = interaction(name, method, n_region ))) +
+  facet_grid(name ~ n_regions, scales = "free_y")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ### ignore below this for now

@@ -93,7 +93,7 @@ F_p_inv <- function(q, mu, sigma, K, l = 0, u = 1){
 }
 
 # random sample from PDF of p-value using its invCDF
-rp <- function( mu, sigma){
+rp <- function(mu, sigma){
   q <- runif(1)
   F_p_inv(q, mu, sigma, K)
 }
@@ -156,6 +156,34 @@ df %>%
 ```
 
 
+```{r}
+expand_grid(nregions = c(8, 12), iter = 1:2, nesting(tibble(mu = 0.9, sigma = 1))) %>%
+  uncount(nregions, .remove = FALSE, .id = "panel") %>%
+  group_by(iter, nregions) %>%
+  mutate(
+    mu = mu * rbinom(nregions, 1, 0.2), #simulating over different values of this
+    p_raw = map2_dbl(mu, sigma, ~rp(.x, .y)), 
+    p_bh = p.adjust(p_raw, method = "BH"),
+    p_bonf = p.adjust(p_raw, method = "bonferroni"),
+  ) %>%
+  pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
+  mutate(
+    true = mu == 0, # null hypothesis being true
+    reject = p < alpha
+  ) %>%
+  group_by(nregions, method, iter) %>%
+  summarize( tp = sum(!true & reject),
+             fp = sum(true & reject),
+             tn = sum(true & !reject),
+             fn = sum(!true & !reject), 
+             .groups = "drop_last") %>%
+  mutate(fdr =  ifelse(tp + fp != 0, (fp) / (tp + fp), 0),
+         pay = (tp - fp_penalty * fp + tn - fn) * 1) %>%
+  summarize(E_pay = mean(pay), E_fdr = mean(fdr), .groups = "drop")
+```
+
+
+
 ### Run
 
 setting seed https://davisvaughan.github.io/furrr/articles/articles/gotchas.html#argument-evaluation
@@ -185,7 +213,7 @@ sim_df <- readRDS("sim_n1000_alpha_pnull_delta_seed32.rds") %>%
 
 ### Results
 
-Benjamini-Hochberg gives the highest payout around P(null) = 0.5 at $\alpha = 0.05$
+Benjamini-Hochberg is the optimal strategy among all the three strategies around P(null) = 0.5 at $\alpha = 0.05$
 
 ```{r}
 sim_df %>% 
@@ -196,7 +224,16 @@ sim_df %>%
   labs(title = "Which (multiple comparisons) correction method gives higher payout")
 ```
 
-Checking the incentives: we pllot the $\alpha$ value where payout is the highest, and see how close it is to 0.05 under different strategies.
+```{r}
+sim_df %>% 
+  filter(p_null> 0.4 & p_null < 0.6 & delta == 0.6) %>%
+  ggplot(aes(x = alpha, y = E_pay, color = method)) +
+  geom_line() + 
+  facet_grid(nregions ~ p_null) + 
+  labs(title = "Which (multiple comparisons) correction method gives higher payout")
+```
+
+Checking the incentives: we plot the $\alpha$ value where payout is the highest, and see how close it is to 0.05 under different strategies.
 
 ```{r}
 sim_df %>%

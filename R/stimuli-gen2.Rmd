@@ -502,3 +502,45 @@ data.sim.alpha_pnull %>%
 ```
 
 
+## Addiitonal checks
+
+```{r FDR and payout}
+df_fdr_payout =  data.sample.stats.summary %>%
+  group_by(n_regions, p_null, method, trial) %>% 
+  summarize(across(TP:FN, ~ sum(.)), .groups = "drop") %>%
+  mutate(FDR = ifelse((FP + TP), FP / (FP + TP), 0), 
+         payout = TP + TN - FN - (19*FP))  
+```
+
+Using Boole's inequality and the fact that p-value is uniformly distributed when $H_0$ is true.
+
+${\displaystyle {\text{FWER}}=P\left\{\bigcup _{i=1}^{m_{0}}\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}\leq \sum _{i=1}^{m_{0}}\left\{P\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}=m_{0}{\frac {\alpha }{m}}\leq \alpha .}$
+
+
+Is OK if FWER is > 0.05 from the simulation because p-value is uniformly distributed?
+
+```{r checking bonferroni}
+# overall FWER
+df_fdr_payout %>%
+  filter(method == "bonferroni") %>%
+  group_by(n_regions, p_null, trial) %>% 
+  summarize(V = any(FP), .groups = "drop")  %>%
+  summarize(FWER = mean(V), .groups = "drop")
+
+# by n_regions, p_null
+df_fdr_payout %>%
+  filter(method == "bonferroni") %>%
+  group_by(n_regions, p_null, trial) %>% 
+  summarize(V = any(FP), .groups = "drop_last") %>%
+  summarize(FWER = mean(V), .groups = "drop") %>%
+  filter(FWER > 0.05)
+```
+
+Check if p-values are uniform under $H_0$ ... sure
+
+```{r}
+data.sample.stats %>%
+  filter(method == "uncorrected", mu == 0) %>%
+  ggplot(aes(x = p)) + 
+  geom_histogram(binwidth = 0.01)
+```

@@ -14,34 +14,27 @@ library(ggplot2)
 library(modelr)
 library(tidybayes)
 library(randtoolbox)
-# library(gamlss.dist)
-library(forcats)
-
-# theme_set( theme_light() ) +
-#   theme_update(
-#     panel.border = element_blank(),
-#     panel.grid.major = element_line(colour = "#666666", size = 0.1),
-#     panel.grid.minor = element_line(colour = "#666666", size = 0.1),
-#     panel.background = element_rect(fill = "transparent",colour = NA),
-#     plot.background = element_rect(fill = "transparent",colour = NA),
-#     axis.text.x = element_blank(),
-#     axis.ticks.x = element_blank(),
-#     axis.title.x = element_blank(),
-#     axis.text.y = element_text( size = 24 ),
-#     axis.title.y = element_text( size = 27 )
-#   )
+library(furrr)
 ```
 
-## Study design
-We manipulate the probability of the alternate hypothesis being true $P(H_1 = True) = 1 - p_{null}$, at consistent intervals between (0.5 and 1). We incentivise participants based on this probability.
 
-- if $P(H_1 = True) = 0.5$, $Payoff_{TP} = Payoff_{FP} = Payoff_{TN} = Payoff_{FN}$
-- if $P(H_1 = True) = 0.9$, $Payoff_{FP} = - 9 \times Payoff_{TP}$, $Payoff_{FN} = -1/9 \times Payoff_{TN}$ (_Note: we need to figure out the relationship between $Payoff_{TP}$ and $Payoff_{FN}$_)
+# Introduction
+The goal of this study is to investigate whether participants, when performing visual exploratory data analysis, perform some form of implicit multiple comparisons under a given incentive structure, and whether different visual representations may impact decision making. The multiple comparisons problem arises when participants are performing multiple hypothesis tests simultaneously, as the more number of inferences are attempted (i.e. comparisons performed), the more likely it is to get a False Positive Discovery. The relationship between the number of comparisons and the probability of making a False Discovery, conditional on the null hypothesis being true, is equal to $1 - (1 - \alpha)^n$, where $n$ is the number of comparisons performed.
 
-For each value of $p_{null}$, we show participants k graphs with 10 data points in each graph. These graphs show the profits of 10 randomly sampled stores from a region with n stores. We ask them if, based on this sample, the stores are meeting a designated profit margin.
+In this document we perform a simulation to:
+- compare the relationship between False Discovery Rate and $p_{null}$, probability of the null hypothesis being true
+- compare False Discovery Rates under different statistical procedures which either do not correct for multiple comparisons or correct for family-wise error rate (Bonferroni), false discovery rate (Benjamini-Hochberg)
+- compare the relationship between False Discovery Rate and $\alpha$, the significance level of the test
+- compare payout under different incentive schemes for each correction procedure
 
-## Stimuli
-We are using the following stimuli to test:
+# Study Design
+Before we go further, it is important to list out aspects of our study design.
+
+## Number of comparisons
+The probability of a False Discovery is correlated with $n$. We test the following values of $n$: 1, 2, 4, 8, 12 and 16.
+
+## Visualisation 
+We are using the following visualisations as stimuli to study their impact on false discovery rates and decision making:
 
 - scatterplot / bar chart / raw data
 - mean point estimate with 95% confidence intervals
@@ -50,21 +43,37 @@ We are using the following stimuli to test:
 - hypothetical outcome plots of quantiles of sampling distribution
 - quantile dot plots
 
+However, for the current simulation, these different chart types will not play a role
 
-### Study Design
+## P(null)
+We manipulate the probability of the alternate hypothesis being true $P(H_1 = True) = 1 - p_{null}$, at consistent intervals between (0.5 and 1). We incentivise participants based on this probability.
 
-In our (initial pilot) study, we use a between subjects design where each participant will see a combination of different incentives and visualizations. Each participant will see 3 blocks of 30 trials each. Each block will consist of 10 trials for each of the three effect sizes. We also specify the number of regions, the prior probability of the number of stores being profitable in each trial (0.5); we do not vary these two values.
+- if $P(H_1 = True) = 0.5$, $Payoff_{TP} = Payoff_{FP} = Payoff_{TN} = Payoff_{FN}$
+- if $P(H_1 = True) = 0.9$, $Payoff_{FP} = - 9 \times Payoff_{TP}$, $Payoff_{FN} = -1/9 \times Payoff_{TN}$ (_Note: we need to figure out the relationship between $Payoff_{TP}$ and $Payoff_{FN}$_)
 
-### Simulating the data
+For each value of $p_{null}$, we show participants k graphs with 10 data points in each graph. These graphs show the profits of 10 randomly sampled stores from a region with n stores. We ask them if, based on this sample, the stores are meeting a designated profit margin.
 
-- different mean and sd combinations such that the effect size is consistent
-- different effect sizes (so that we can control for effect size)
+## Effect size
+We follow Kale et al.'s study design and use an effect size of 0.9 (mean = 0.9, sd = 1)
 
-First, we will simulate the data for the entire population. We create a data frame which contains all possible combinations of trials (indexed 1 to 10), and mean and standard deviation pairs. We then use a binomial distribution to simulate the mean for each of the 10 regions that will be presented to participants in a trial. Taking the value for each region as the mean of a normal distribution, we simulate the profits for the entire population (n = 20). We then randomly sample 20 stores from the population.
+# Simulating the data
+
+Now that we have nailed down the variables in our experiment design we can begin to siimulate the data. Before we begin, we set up the parameters which are relevant for our experiment design. We present participants with graphs of 20 points (sample size). To support multiple comparisons, we create graphs for at 6 different levels of "# of possible comparisons" as mentioned previously
 
 ```{r}
-RNG_data = function (n_regions, n, p_null) {
-  sobol(n_trials * n_regions, dim = n + 1, scrambling = 3, seed = .seed) %>%
+sample_size = 20 # num of points in each graph
+n_trials = 200 # num of trials, here we use a large number for CLT
+n_region = c(1, 2, 4, 8, 12, 16) # num of possible multiple comparisons
+```
+
+## The RNG function
+
+First, we will simulate the data for the entire population. We use the function `RNG_data` for our simulation (more details below).
+
+
+```{r}
+RNG_data = function (n_regions, n, p_null, .seed = 1) {
+  sobol(n_trials * n_regions, dim = n + 1, scrambling = 3, seed = .seed) %>% # gives a multivariate uniform distribution
     as_tibble(.name_repair = ~ gsub("X.", "V", make.names(., unique = TRUE))) %>%
     rename_at(vars("V1":paste0("V", n)), ~ stringr::str_replace(., 'V', "store_")) %>%
     rename(mu = X) %>%
@@ -73,17 +82,76 @@ RNG_data = function (n_regions, n, p_null) {
 }
 ```
 
-Next, we set up the parameters which are relevant for our experiment design. Our study is designed to be analogous to NHST at $\alpha = 0.05$, which is the convention. We present participants with graphs of 20 points. To support multiple comparisons, we create graphs for at 6 different levels of "# of possible comparisons"
+Let us break this down further. The function `sobol` returns a multivariate uniform distribution (where n = `sample_size + 1`). This multivariate distribution is a $m \times n$ vector (where $m = \textrm{# of trials}$). We then convert this into a tibble (using `as_tibble`) where each column represents one dimension of this multivariate uniform distribution. We then rename the columns to reflect the data that we are simulate. This is what the code looks like:
 
 ```{r}
-alpha = 0.05
-sample_size = 20
-n_trials = 1e3
-n_region = c(1, 2, 4, 8, 12, 16)
-.seed = 1
+sobol(n_trials * 1, dim = sample_size + 1, scrambling = 3, seed = 1) %>% 
+    as_tibble(.name_repair = ~ gsub("X.", "V", make.names(., unique = TRUE))) %>%
+    rename_at(vars("V1":paste0("V", sample_size)), ~ stringr::str_replace(., 'V', "store_")) %>%
+    rename(mu = X)
 ```
 
-Using these parameters, we see if we are able to generate data where, as the number of comparisons ($x$) increases, the probability of a False Positive finding also increases as: $f(x) = 1 - (0.95)^x$. We can see from our results that this holds:
+We consider the first column of this multivariate distribution (`mu`) to indicate whether a region is, on average, profitable or not. We consider the remaining rows to represent the quantiles of a normal distribution. The other parameters of the normal distribution (mean and variance) are determined based on the value of `mu`. We will expand on this later.
+
+The final two lines of the function are to add two columns, indicating `trial` and `region`.
+
+Thus, this is what the data looks like for 1 region (Note that we use a large value for # of trials to obtain an asymptotic estimate of False Discovery Rate under different conditions):
+
+```{r}
+RNG_data(n_regions = 1, sample_size, 1, 1)
+```
+
+
+## The relationship between FDR and $\alpha$, if $p(null) = 1$
+First, we want to verify if we are simulating the data correctly, by comparing the False Discovery Rates under different multiple comparison scenarios to the theoretical estimate. We use $p(null) = 1$ to generate the data:
+
+First, we create a grid of the different multiple comparison scenarios and valuess of $p(null)$:
+
+```{r}
+(.dat_sim = crossing(n_regions = n_region, p_null = 1))
+```
+For each point in this grid, we use the `RNG_data` function to simulate values for each store:
+
+```{r}
+(.dat_sim = .dat_sim %>%
+  mutate(
+    values = map2(n_regions, p_null, ~ RNG_data(.x, n = sample_size, .y))
+  ) %>%
+  unnest(values))
+```
+We then convert the data into the long format (we will subsequently summarise the data for each of the 20 stores into a list, which is not shown below):
+
+```{r}
+(.dat_sim = .dat_sim %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(n_regions, p_null, trial, region, mu))
+```
+Finally, as mentioned in Section 3.1, the random numbers generated for each stores correspond to the quantiles of a normal distribution of mean 0.9 and standard deviation 1 (effect size = 0.9). Thus, after performing this transformation, for each trial and each region, we obtain 20 normally distributed data points, which represent the profits for the stores. These are contained in the `data` column of the following table:
+
+```{r}
+(.dat_sim = .dat_sim %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(data = map2(data, mu, ~ qnorm(.x, .y * 0.9))))
+```
+The graph below shows what the simulated data looks like for 1 (out of the 200 simulated trials), when the number of possible comparisons is four:
+
+```{r, fig.width = 12, fig.height = 3}
+.dat_sim %>%
+  filter(n_regions == 4 & trial == 1) %>%
+  unnest(data) %>%
+  ggplot(aes(y = data, x = NA)) +
+  geom_jitter( width = 0.05, alpha = 0.7 ) +
+  facet_grid(. ~ region) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  labs(y = "Profit", x = "# of comparisons") +
+  theme_minimal() +
+  theme(
+    axis.ticks.x = element_blank(), 
+    axis.text.x = element_blank()
+  )
+```
+
+We then put all of this together into a single code block, and perform a one-sided t-test for the alternative hypothesis $H_1$: *is the average profit for the set of 20 stores in the sample* $> 0$? ($H_0$: the average profit for the set of stores $\ngtr 0$):
 
 ```{r}
 data.sample = crossing(n_regions = n_region, p_null = 1) %>%
@@ -94,32 +162,43 @@ data.sample = crossing(n_regions = n_region, p_null = 1) %>%
   pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
   group_by(n_regions, p_null, trial, region, mu) %>%
   summarise(data = list(profit), .groups = "drop") %>%
-  mutate(data = map2(data, mu, ~ qnorm(.x, .y))) %>%
-  mutate( p = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value) ) %>% # calculates p-value
+  mutate(data = map2(data, mu, ~ qnorm(.x, .y * 0.9))) %>%
+  mutate(p = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value))
+```
+
+Based on the p-values, we then either reject or do not reject the null hypothesis at a signficance level of $\alpha = 0.5$. We then calculate the number of True Positives (TP), True Negatives (TN), False Positives (FP) and False Negatives (FN) for every trial. Next, for every trial, we calculate whether there were any FPs (since we want to verify whether the presence of the multiple comparisons problem in our simulated data, which claims that as the number of comparisons increases, the probability of a False Positive finding also increases). Next we take the average of the presence of False Positives across the set of 200 trials to obtain an asymptotic value for the probability of finding a False Positive.
+
+We then compare the empirical values from our simulation to the theoretical estimate. For this simulation, we can see that as the number of comparisons ($x$) increases, the probability of a False Positive finding also increases as: $f(x) = 1 - (0.95)^x$. We can see from our results that this holds:
+
+```{r}
+alpha = 0.05
+data.sample %>% 
   mutate(reject_null = p < alpha, `mu > 0` = mu != 0) %>% # reject or not?
   group_by(n_regions, p_null, trial) %>%
   mutate(TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
             FP = as.integer(!`mu > 0` & reject_null),
             TN = as.integer(!`mu > 0` & !reject_null),
             FN = as.integer(`mu > 0` & !reject_null),
-  )
+  ) %>%
+  summarise_at(.vars = vars(TP, FP, TN, FN), sum) %>% # calculates total number of TP, TN, FP, FN for each trial
+  mutate(FDR = ifelse(FP+TP == 0, 0, FP/(FP+TP))) %>% # calculates the average FDR for each trial
+  summarise(FDR = mean(FDR), .groups = "drop") %>% # estimates Pr(FP) across the set of trial
+  mutate(`theoretical estimate` = 1 - 0.95^n_regions) %>%
+  pivot_longer(cols = c(FDR, `theoretical estimate`)) %>%
+  ggplot() +
+  geom_point(aes(y = value, x = n_regions, color = name)) +
+  geom_line(aes(y = value, x = n_regions, color = name))
 ```
 
-
-```{r}
-data.sample %>%
-  summarise(FPR = any(FP), .groups = "drop_last") %>%
-  summarise(FPR = mean(FPR), .groups = "drop_last") %>%
-  mutate(`theoretical estimate` = 1 - 0.95^n_regions)
-```
+## Effect of p(null)
 
 Next, we need to determine a value for the probability of the null hypothesis being true $P(null)$. The False Discovery Rate would vary based on $P(null)$, and we would like to see this relationship, as well as how  $E(payout)$ is affected. To check for this, we first generate the data we will use to create graphs, and compute the uncorrected and Benjamini-Hochberg p-values.
 
 We first create the grid of `# comparisons` and `P(null)$ values:
-
 ```{r}
-(data.sample.grid = crossing(n_regions = n_region, p_null = seq(0, 1, by = 0.1)))
+(data.sample.grid = crossing(n_regions = n_region, p_null = seq(0.1, 0.9, by = 0.1)))
 ```
+
 To this, we add draws from a multivariate uniform distribution which encodes the following two piece of information:
 - whether a store is positive or not (computed as: x > p_null, where x is a random variable)
 - quantile for the profit of a store
@@ -128,57 +207,41 @@ We use the previously defined function `RNG_data` for this
 ```{r}
 data.sample.unif = data.sample.grid %>%
   mutate(
-    values = map2(n_regions, p_null, ~ RNG_data(.x, n = sample_size, .y))
+    values = map2(n_regions, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
   ) %>%
   unnest(values)
-
 head(data.sample.unif)
 ```
-Next, we process the data to be in the long format, which would make subsequent operations eaasier:
+Next, we process the data to be in the long format, which would make subsequent operations easier:
 
 ```{r}
-data.sample.unif = data.sample.unif %>%
+data.sample_grouped.unif = data.sample.unif %>%
   pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
   group_by(n_regions, p_null, trial, region, mu) %>%
   summarise(data = list(profit), .groups = "drop")
-
-head(data.sample.unif)
+head(data.sample_grouped.unif)
 ```
 
-Recall that the column data currently stores the quantiles for the profit of 20 stores, based on a normal distribution. However, we want the actual profits. In the next step, we compute profits from the available quantile information using the `qnorm` function. We use mean and SD of 1.
+Recall that the column data currently stores the quantiles for the profit of 20 stores, based on a normal distribution. However, we want the actual profits. In the next step, we compute profits from the available quantile information using the `qnorm` function. We use mean of 0.9 and SD of 1. We store this simulated dataset to avoid recomputation.
 
 ```{r}
-data.sample = data.sample.unif %>%
+effect_size = 0.9
+data.sample = data.sample_grouped.unif %>%
+  nest(data = everything()) %>%
+  expand(data, effect_size = effect_size) %>%
+  unnest(data) %>%
   group_by(n_regions, p_null, trial) %>%
-  mutate(data = map2(data, mu, ~ qnorm(.x, .y)))
-
-saveRDS(data.sample, "sim_data_sample_n1000.rds")
-
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample, "sim_data_sample_n200.rds")
 head(data.sample)
 ```
-
-Now that we have actual data for all the 20 store (in each of varying number of regions and values of $p(null)$, over 1000 trials), we can perform a NHST using a one-sided t-test. This will give us an uncorrected p-value. We can then account for multiple comparisons by adjusting the p-values using various correction methods such as Benjamini-Hochberg and Bonferroni:
-
-```{r}
-data.sample = readRDS("sim_data_sample_n1000.rds") # delta = 1
-```
-
-Maybe the problem with payout is because the $\delta$ this time is larger???
-Last time: $\delta = [0.3, 0.45, 0.6]$
-
-
-ACHTUNG: secretly changing delta
+We then load the dataset, and perform a one-sided t-test for the alternative hypothesis $H_1$: *is the average profit for the set of 20 stores in the sample* $> 0$? ($H_0$: the average profit for the set of stores $\ngtr 0$). We then adjust the p-values using two multiple comparisons correction methods (Bonferroni and Benjamini-Hochberg):
 
 ```{r}
-delta <- 0.5
-
-data.sample <- data.sample %>%
-  mutate(data = map2(data, mu, \(x, mu) mu + (x - mu) / delta)) 
-  
-```
-
-
-```{r}
+data.sample = readRDS("sim_data_sample_n200.rds")
 data.sample.stats = data.sample %>%
   mutate(
     p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value), # calculates p-value
@@ -189,40 +252,239 @@ data.sample.stats = data.sample %>%
   pivot_longer(c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", names_prefix = "p_", values_to = "p")
 ```
 
-Next, we compute the TP/TN/FP/FN values for each which then allows up to compute False Discovery Rates
+Next, we compute the TP/TN/FP/FN values, by controlling for alpha at the 0.05 level, which then allows up to estimate the False Discovery Rates. We visualise the False Discovery Rate as a function of `p(null)` for each type of correction and level of alpha. We plot it separately for the number of possible regions:
 
-```{r}
-data.sample.stats2 = data.sample.stats %>%
-  group_by(method, n_regions, p_null, trial) %>%
+```{r, fig.width = 12, fig.height = 3}
+alpha = 0.05
+data.sample.stats.summary = data.sample.stats %>%
+  ungroup() %>%
+  # expand(nesting(region, mu, p, method, n_regions, p_null, trial), alpha = alphas) %>%
+  group_by(method, n_regions, p_null, effect_size, trial) %>%
   mutate(
     reject_null = p < alpha, `mu > 0` = mu != 0, # reject or not?
     TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
     FP = as.integer(!`mu > 0` & reject_null),
     TN = as.integer(!`mu > 0` & !reject_null),
     FN = as.integer(`mu > 0` & !reject_null)
-  )
+  ) %>%
+  summarise_at(.vars = vars(TP, FP, TN, FN), sum)
+data.sample.stats.summary %>%
+  mutate(FDR = ifelse((FP + TP), FP / (FP + TP), 0)) %>%
+  summarise(FDR = mean(FDR), .groups = "drop") %>%
+  ggplot() +
+  geom_hline(aes(yintercept = alpha), color = "black") +
+  geom_line(aes(x = p_null, y = FDR, color = method)) +
+  facet_grid(. ~ n_regions, scales = "free_y") +
+  theme_minimal()
+```
+
+In addition to the False Discovery rate, we need to evaluate how our proposed incentive structure changes for different values of `p(null)` (x-axis), for each level of the `# of possible comparisons`. We reward 1 point for each correct discovery (True Positive and True Negative), -1 for each False Negative, $-(1-\alpha)/alpha = -19$ for each False Positive:
+
+```{r, fig.width = 12, fig.height = 3}
+data.sample.stats.summary %>%
+  mutate(payout = TP + TN - FN - (1-alpha)/alpha*FP) %>%
+  summarise(E_payout = mean(payout), .groups = "drop") %>%
+  ggplot() +
+  geom_line(aes(x = p_null, y = E_payout, color = method)) +
+  facet_grid(. ~ n_regions, scales = "free_y") +
+  theme_minimal()
+```
+
+From the graphs above, we notice that if $p(null) <= 0.5$, we might not observe an increased false discovery rate even for uncorrected methods, suggesting that we might want to use a higher value of $p(null)$. For the subsequent simulations, we use $p(null) = 0.8$.
+
+## Impact of $\alpha$
+
+However, different values of $\alpha$ might have an impact on the payout. Below, we calculate, for different incentive schemes, the value of $\alpha$ that maximises payout:
+
+```{r}
+data.sample.p_val = data.sample %>%
+  filter(p_null == 0.8) %>%
+  mutate(
+    p = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)
+  ) %>%
+  select(-data)
+alpha_optim = function(alpha, comparisons, method, TP_mult, FP_mult) {
+  data.sample.p_val %>%
+    filter(n_regions == comparisons) %>%
+    mutate( p = p.adjust(p, method = method) ) %>%
+    expand( nesting(region, mu, p), alpha = alpha ) %>%
+    group_by(alpha, trial) %>%
+    mutate(
+      reject_null = p < alpha, `mu > 0` = mu != 0, # reject or not?
+      TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
+      FP = as.integer(!`mu > 0` & reject_null),
+      TN = as.integer(!`mu > 0` & !reject_null),
+      FN = as.integer(`mu > 0` & !reject_null)
+    ) %>%
+    summarise_at(.vars = vars(TP, FP, TN, FN), sum) %>%
+    summarise(payout = mean(TP*TP_mult + TN - FN + FP*FP_mult)) %>%
+    magrittr::extract2("payout")
+}
+plan(multisession, workers = 8)
+df.alpha_optimal = crossing(
+  comparisons = n_region,
+  method = c("BH", "bonferroni", "none"),
+  nesting(TP_mult = c(1, 1, 1, 9), FP_mult = c(-1, -19, -9, -1))
+) %>%
+  mutate(optim_alpha = future_pmap(list(comparisons, method, TP_mult, FP_mult), function(x, y, z, w) {
+    optimal = optimize(alpha_optim, interval = c(0, 1), comparisons = x, method = y, TP_mult = z, FP_mult = w, maximum = TRUE)
+    tibble(maximum = optimal$maximum, optimum = optimal$objective)
+  })) %>%
+  unnest(optim_alpha) %>%  
+  mutate(method = ifelse(method == "none", "uncorrected", method))
+plan(sequential)
+```
+
+Next, we expand our grid to include different values of $\alpha \in \{0.001, 0.005, 0.01, 0.02, 0.03, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.8\}$ and incentive schemes. We then calculate the number of TP, TN, FP and FN for each trial, at at each level of $\alpha$
+
+```{r, fig.width = 12, fig.height = 6}
+# what are the different FDRs that we want to control for?
+alphas = c(0.001, 0.005, 0.01, 0.02, 0.03, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.8) 
+data.sample.summary.alpha = data.sample.stats %>%
+  ungroup() %>%
+  filter(p_null == 0.8) %>%
+  expand(
+    nesting(region, mu, p, method, n_regions, p_null, trial), 
+    alpha = alphas,
+    nesting(TP_mult = c(1, 1, 1, 9), FP_mult = c(-19, -9, -1, -1))
+  ) %>%
+  group_by(method, n_regions, alpha, TP_mult, FP_mult, trial) %>%
+  mutate(
+    reject_null = p < alpha, `mu > 0` = mu != 0, # reject or not?
+    TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
+    FP = as.integer(!`mu > 0` & reject_null),
+    TN = as.integer(!`mu > 0` & !reject_null),
+    FN = as.integer(`mu > 0` & !reject_null)
+  ) %>%
+  summarise_at(.vars = vars(TP, FP, TN, FN), sum)
+```
+
+We can then calculate the average expected payout across the set of trials as a function of $\alpha$. We also highlight the points where expected payout is maximum based on our optimisation calculation previously.
+
+```{r, fig.width = 12, fig.height = 6}
+data.sample.summary.alpha %>%
+  mutate(payout = TP*TP_mult + TN - FN + FP*FP_mult) %>%
+  summarise(E_payout = mean(payout), .groups = "drop") %>%
+  ggplot() +
+  geom_line(aes(x = alpha, y = E_payout, group = factor(n_regions), colour = n_regions)) +
+  geom_point(data = df.alpha_optimal, aes(x = maximum, y = optimum), color = "red", size = 1) +
+  facet_grid(interaction(TP_mult, FP_mult) ~ method, scales = "free_y") +
+  scale_x_log10() +
+  theme_minimal()
+```
+The figure above indicates that, when $p(null) = 0.8$, at each level # of comparison, the payout is maximised at values of $\alpha$ close to 0.05 only for the BH correction method. For the Bonferroni correction, the $\alpha$ value at which payout is maximum *increases* with increase in the # of possible comparisons, as Bonferroni is a very conservative correction that gives greater chance of FNs compared to the other methods. On the other hand, for the uncorrected strategy, the $\alpha$ value at which payout is maximum *decreases* with increase in the # of possible comparisons; this is because the uncorrected strategy admits a greater chance of FPs in multiple comparisons scenarios, and one should be more conservative in rejecting null hypotheses for optimal results.
+
+## Comparisons with theoretical estimates
+
+So far, we have performed simulations to understand how different statistical correction methods, significance levels for statistical tests and properties of the data generating process (such as $p(null)$) affect False Discovery Rates and Expected Payout under an incentive scheme.
+
+### p-value PDF, CDF, invCDF definitionss
+
+- Definitions of PDF and CDF of the $p$-value from [@hung_behavior_1997]
+- Random draws from the $p$-value PDF `rp` is sampled through random draws from the uniform [0, 1] quantile space, then looked up through the inverse CDF function (using `uniroot`). 
+- **Limitation**: These functions are dependent on the $\mu$, $\sigma$, $K$ parameters. These parameters are most likely different IRL but we are not using other values yet.
+
+```{r}
+K = sample_size
+# PDF 
+f_p <- function(x, mu, sigma, K) {
+  dnorm(qnorm(1 - x) - sqrt(K) * mu / sigma) / dnorm(qnorm(1 - x))
+}
+# CDF
+F_p <- function(x, mu, sigma, K) {
+  1 - pnorm(qnorm(1 - x) - sqrt(K) * mu/sigma)
+}
+# inverse CDF of p-value
+F_p_inv <- function(q, mu, sigma, K, l = 0, u = 1){
+  uniroot(function(p) F_p(p, mu, sigma, K) - q, lower = l, upper = u)$root
+}
+# random sample from PDF of p-value using its invCDF
+rp <- function(mu, sigma){
+  q <- runif(1)
+  F_p_inv(q, mu, sigma, K)
+}
+```
+
+Next, we create a function which calculates the average false discovery rate and payout (across the set of trials):
+
+```{r}
+fp_penalty = 19
+n_trials = 1000
+calculate_payout = function(alpha, p_null) {
+  expand_grid(nregions = n_region, iter = 1:n_trials, mu = 0.9, sigma = 1) %>%
+    uncount(nregions, .remove = FALSE, .id = "panel") %>%
+    mutate(unif = map_dbl(row_number(), ~ sobol(1, seed = ., scrambling = 2))) %>%
+    group_by(nregions, iter) %>%
+    mutate(
+      mu = ifelse(unif > p_null, mu, 0),
+      p_raw = map2_dbl(mu, sigma, ~rp(.x, .y)), 
+      p_bh = p.adjust(p_raw, method = "BH"),
+      p_bonf = p.adjust(p_raw, method = "bonferroni"),
+    ) %>%
+    pivot_longer(starts_with("p_"), names_to = "method", values_to = "p")  %>%
+    mutate(
+      true = mu == 0, # null hypothesis being true
+      reject = p < alpha
+    ) %>%
+    group_by(iter, nregions, method) %>%
+    summarize( tp = sum(!true & reject),
+               fp = sum(true & reject),
+               tn = sum(true & !reject),
+               fn = sum(!true & !reject), 
+               .groups = "drop_last") %>%
+    mutate(fdr =  ifelse(tp + fp != 0, (fp) / (tp + fp), 0),
+           pay = (tp - fp_penalty * fp + tn - fn) * 1) %>%
+    group_by(method, nregions) %>%
+    summarize(E_pay = mean(pay), E_fdr = mean(fdr), .groups = "drop")
+}
+```
+
+We then create a grid of different $\alpha$ and $p(null)$ values which are passed as arguments to the `calculate_payout` function defined above. As this takes a long time to execute, we store it in a .rds file which we then load subsequently:
+
+```{r}
+plan(multisession, workers = 8)
+data.sim.alpha_pnull = expand_grid(
+    alpha = seq(0.01, 0.15, by = 0.01),
+    p_null = seq(0.04, 1, by = 0.02)
+  ) %>%
+  mutate(sim = future_map2(alpha, p_null, calculate_payout, .options = furrr_options(seed = TRUE), .progress = TRUE)) %>%
+  unnest(sim)
+plan(sequential)
+data.sim.alpha_pnull %>%
+  saveRDS(file = "simulation-invCDF-alpha_pnull.rds")
+```
+
+The following plot shows the simulated results of payout as a function of alpha and p(null)
+
+```{r, fig.width = 12, fig.height = 3}
+data.sim.alpha_pnull = readRDS(file = "simulation-invCDF-alpha_pnull.rds")
+data.sim.alpha_pnull %>%
+  group_by(alpha, method, nregions) %>%
+  summarise(value = mean(E_pay), .groups = "drop") %>%
+  ggplot() +
+  geom_line(aes(x = alpha, y = value, colour = nregions, group = nregions)) +
+  facet_grid(. ~ method) +
+  theme_minimal()
+```
+
+```{r, fig.width = 12, fig.height = 3}
+data.sim.alpha_pnull %>%
+  filter(alpha == 0.05) %>%
+  ggplot() +
+  geom_line(aes(x = p_null, y = E_pay, colour = method)) +
+  facet_grid(. ~ nregions, scales = "free_y") +
+  theme_minimal()
 ```
 
 
-### Check if corrections worked
+## Addiitonal checks
 
 ```{r FDR and payout}
-(df_fdr_payout <-
-  data.sample.stats2 %>%
+df_fdr_payout =  data.sample.stats.summary %>%
   group_by(n_regions, p_null, method, trial) %>% 
   summarize(across(TP:FN, ~ sum(.)), .groups = "drop") %>%
   mutate(FDR = ifelse((FP + TP), FP / (FP + TP), 0), 
          payout = TP + TN - FN - (19*FP))  
-)
-```
-
-
-```{r checking BH}
-# average/expected? FDR across the 1000 trials
-df_fdr_payout %>%
-  group_by(n_regions, p_null, method) %>% 
-  summarize(FDR = mean(FDR), .groups = "drop")  %>%
-  filter(method == "BH" & FDR > 0.05)
 ```
 
 Using Boole's inequality and the fact that p-value is uniformly distributed when $H_0$ is true.
@@ -230,7 +492,7 @@ Using Boole's inequality and the fact that p-value is uniformly distributed when
 ${\displaystyle {\text{FWER}}=P\left\{\bigcup _{i=1}^{m_{0}}\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}\leq \sum _{i=1}^{m_{0}}\left\{P\left(p_{i}\leq {\frac {\alpha }{m}}\right)\right\}=m_{0}{\frac {\alpha }{m}}\leq \alpha .}$
 
 
-Is OK if FWER is > 0.05 from the simulation because p-value is uniformly distributed? $P(null) = 0.9$ and 1 are more problematic because ....?
+Is OK if FWER is > 0.05 from the simulation because p-value is uniformly distributed?
 
 ```{r checking bonferroni}
 # overall FWER
@@ -238,8 +500,7 @@ df_fdr_payout %>%
   filter(method == "bonferroni") %>%
   group_by(n_regions, p_null, trial) %>% 
   summarize(V = any(FP), .groups = "drop")  %>%
-  summarize(FWER = mean(V), .groups = "drop") 
-
+  summarize(FWER = mean(V), .groups = "drop")
 # by n_regions, p_null
 df_fdr_payout %>%
   filter(method == "bonferroni") %>%
@@ -255,924 +516,5 @@ Check if p-values are uniform under $H_0$ ... sure
 data.sample.stats %>%
   filter(method == "uncorrected", mu == 0) %>%
   ggplot(aes(x = p)) + 
-  geom_histogram(binwidth = 0.01) + 
-  labs(title = "distribution for p-value under H0")
+  geom_histogram(binwidth = 0.01)
 ```
-ACHTUNG: why high `n_regions` and high `p_null` leads to high FWER/FDR
-
-```{r}
-df_alpha_adj <- tibble(n_regions = n_region) %>%
-  mutate(p_adj = 0.05/ n_region )
-
-data.sample.stats %>%
-  filter(method == "uncorrected", mu == 0) %>%
-  filter(p <= 0.05, n_regions == 16) %>%
-  ggplot(aes(x = p)) + 
-  geom_histogram() + 
-  facet_wrap( ~ p_null, labeller = label_both) +
-  geom_vline(data= df_alpha_adj %>% filter(n_regions == 16), mapping = aes(xintercept = p_adj)) +
-  labs(title = "faceted by P(null)")
-```
-
-```{r}
-data.sample.stats %>%
-  filter(method == "uncorrected") %>%
-  group_by(n_regions, region) %>%
-  slice(3)  %>%
-  arrange(region)
-```
-
-
-```{r}
-data.sample.stats2 %>%
-  summarise_at(.vars = vars(TP, FP, TN, FN), sum) %>%
-  mutate(FDR = ifelse((FP + TP), FP / (FP + TP), 0)) %>%
-  summarise(FDR = mean(FDR), .groups = "drop") %>%
-  ggplot() +
-  geom_point(aes(x = p_null, y = FDR, color = method)) +
-  geom_hline(yintercept = 0.05, color = "red") +
-  facet_wrap( ~ n_regions)
-```
-
-### check if BH is still the best strategy
-
-Looks like Bonferroni is the better one, 
-
-```{r}
-data.sample.stats2 %>%
-  summarise_at(.vars = vars(TP, FP, TN, FN), sum) %>%
-  mutate(payout = TP + TN - FN - (19*FP)) %>%
-  summarise(E_payout = mean(payout), .groups = "drop") %>%
-  ggplot() +
-  geom_line(aes(x = p_null, y = E_payout, color = method)) +
-  facet_wrap( ~ n_regions)
-```
-Closer look at the FP and payout patterns
-
-```{r}
-df_fdr_payout %>%
-  filter(method != "uncorrected") %>%
-  group_by(n_regions, p_null, method) %>%
-  mutate(across(TP:FN, \(x) x / n_regions, .names = "{.col}R")) %>%
-  summarize(across(FDR:FNR, ~ mean(.))) %>%
-  pivot_longer(cols = FDR:FNR) %>%
-  mutate(name = fct_relevel(name, c("TPR", "FPR", "TNR", "FNR"))) %>%
-  ggplot() +
-  geom_line(aes(p_null, value, color = method, group = interaction(name, method, n_region ))) +
-  facet_grid(name ~ n_regions, scales = "free_y")
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### ignore below this for now
-
-### Checks: data generation
-
-We want to make sure that our generated data for the stimuli satisfies the following two criteria:
-- the # FPs under an uncorrected strategy be monotonically increasing with # regions
-- the generated dataset is not an outlier (we test this by comparing the FP statistics to a a dsitribution of 1000 other datasets generated using the same process).
-
-```{r setup_vars}
-# we will load the data instead
-sample_size = 20
-n_trials = 10
-n_region = c(1, 2, 4, 8, 12, 16)
-p_h1 = 0.2
-n_iter = 1000
-alpha = 0.05
-```
-
-```{r}
-d = crossing( 
-    iter = 1:n_iter,
-    p_h1 = p_h1,
-    n_region = n_region,
-    trial = seq(1:n_trials)
-  )
-```
-
-
-```{r}
-simulate_data = function(p_h1, regions) {
-  mu = rbinom(regions, 1, p_h1)
-  region_idx = seq(1:regions)
-  data = map(as.list(mu), ~ rnorm(sample_size, mean = .))
-  
-  tibble(mu = mu, region_idx = region_idx, n_region = regions) %>%
-    mutate(
-      data = as.list(data),
-      p = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
-      reject = p < alpha, true = mu == 0
-    ) %>%
-    group_by(n_region) %>%
-    summarise( TP = sum(!true & reject),
-               FP = sum(true & reject),
-               TN = sum(true & !reject),
-               FN = sum(!true & !reject), 
-               .groups = "drop_last") %>%
-    mutate(
-      FDR = FP / (FP + TP), 
-      FDR = ifelse(is.nan(FDR), 0, FDR)
-    ) %>%
-    select(-n_region)
-}
-```
-
-
-```{r, eval = FALSE}
-plan(multisession, workers = 6)
-options <- furrr_options(seed = 32)
-
-sim_df = d %>%
-  split(1:nrow(.)) %>%
-  future_map_dfr( ~ cbind(.x, simulate_data(.$p_h1, .$n_region), row.names = NULL),
-                 .options = options, .progress = TRUE)
-
-beep()
-saveRDS(sim_df, "sim_n1000.rds")
-```
-
-
-```{r}
-sim_df = readRDS("sim_n1000.rds")
-
-sim_df %>%
-  mutate(n_region = as.factor(n_region)) %>%
-  group_by(iter, n_region) %>%
-  summarise(FDR = mean(FDR), .groups = "drop") %>%
-  ggplot() +
-  geom_point(aes(x = FDR, y = n_region), position = position_jitter(height = 0.2), alpha = 0.1) +
-  geom_point(data = data_sample.summary, aes(x = FDR, y = factor(n_regions)), color = "red")
-```
-
-```{r}
-sim_df %>%
-  filter(n_region == 1) %>%
-  group_by(iter, n_region)
-```
-
-
-
-```{r}
-alpha = 0.05
-
-select(data.sample, -c(p_h1, -effect_size, mean, sd) ) %>%
-  mutate(n_region = as.numeric(n_region)) %>%
-  mutate(
-    p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)# ,
-    # p_bh = p.adjust(p_uncorrected, "BH")
-  ) %>%
-  select(-data) %>%
-  pivot_longer(starts_with("p_"), names_to = "method", names_prefix = "p_", values_to = "p") %>%
-  mutate(reject = p < alpha, true = mu == 0) %>%
-  group_by(n_region, trial) %>%
-  summarise( TP = sum(!true & reject),
-             FP = sum(true & reject),
-             TN = sum(true & !reject),
-             FN = sum(!true & !reject), 
-             .groups = "drop_last") %>%
-  mutate(
-    FDR = FP / (FP + TP), 
-    FDR = ifelse(is.nan(FDR), 0, FDR)
-  ) %>%
-  summarise(FDR = mean(FDR))
-
-select(data.sample, -c(p_h1, -effect_size, mean, sd) ) %>%
-  mutate(n_region = as.numeric(n_region)) %>%
-  mutate(
-    p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)# ,
-    # p_bh = p.adjust(p_uncorrected, "BH")
-  ) %>%
-  select(-data) %>%
-  pivot_longer(starts_with("p_"), names_to = "method", names_prefix = "p_", values_to = "p") %>%
-  mutate(reject = p < alpha, true = mu == 0) %>%
-  group_by(n_region) %>%
-  summarise( TP = sum(!true & reject),
-             FP = sum(true & reject),
-             TN = sum(true & !reject),
-             FN = sum(!true & !reject), 
-             .groups = "drop_last") %>%
-  mutate(
-    FDR = FP / (FP + TP), 
-    FDR = ifelse(is.nan(FDR), 0, FDR)
-  )
-
-# saveRDS(data.sim, file = "../data/simulated_data-all_regions.rds")
-```
-
-
-```{r, remove-later, eval = FALSE}
-# remove later
-data.sim.12reg <- data.sim %>%
-  mutate(region_idx = map(mu, ~ seq(1:n_region[[1]]))) %>%
-  unnest(cols = c(mu, region_idx)) %>%
-  mutate( 
-    mu = mean * mu,
-    data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
-  )
-
-data.sim.8reg <- data.sim %>%
-  mutate(
-    mu = map(mu, ~ sample(., size = 8)),
-    region_idx = map(mu, ~ seq(1:n_region[[2]]))
-  ) %>%
-  unnest(cols = c(mu, region_idx)) %>%
-  mutate( 
-    mu = mean * mu,
-    data = map2(mu, sd, ~ rnorm(n_stores, .x, .y))
-  )
-#saveRDS(data.sim.12reg, file = "../data/simulated_data_12regions.rds")
-#saveRDS(data.sim.8reg, file = "../data/simulated_data_8regions.rds")
-
-#load("../data/simulated_data.RData")
-data.sim.12reg <- readRDS(file = "../data/simulated_data_12regions.rds")
-data.sim.8reg <- readRDS(file = "../data/simulated_data_8regions.rds")
-nu = sample_size - 1
-```
-
-## Decision making using different strategies
-Below, we compute the FDR if analyst accounted for multiple comparisons
-
-```{r}
-# data.sample <- rbind(
-#   mutate(data.sim.12reg, nregions = 12),
-#   mutate(data.sim.8reg, nregions = 8)
-# )
-data.sample = data.sim
-
-alpha = 0.05
-
-select(data.sample, -c(p_h1, -effect_size, mean, sd) ) %>%
-  mutate(n_region = as.numeric(n_region)) %>%
-  mutate(
-    p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)# ,
-    # p_bh = p.adjust(p_uncorrected, "BH")
-  ) %>%
-  select(-data) %>%
-  pivot_longer(starts_with("p_"), names_to = "method", names_prefix = "p_", values_to = "p") %>%
-  mutate(reject = p < alpha, true = mu == 0) %>%
-  filter(method == "uncorrected") %>%
-  group_by(n_region) %>%
-  summarise( TP = sum(!true & reject),
-             FP = sum(true & reject),
-             TN = sum(true & !reject),
-             FN = sum(!true & !reject), 
-             .groups = "drop") %>%
-  mutate(FDR = FP / (FP + TP))
-```
-
-
-```{r}
-df.bh <- bind_rows(list("8" = data.sim.8reg, "12" = data.sim.12reg), .id = "nregions") %>%
-  select(-c(region_idx, effect_size, population, p_h1)) %>%
-  mutate(nregions = as.numeric(nregions), delta = mean/sd) %>%
-  mutate(
-    p_raw = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value),
-    p_bh = p.adjust(p_raw, "BH")
-  ) %>%
-  select(-data) %>%
-  pivot_longer(starts_with("p_"), names_to = "method", values_to = "p") %>%
-  mutate(reject = p < alpha, true = mu == 0)
-
-write.csv(df.bh, "../data/final-study-bh.csv", row.names = FALSE)
-```
-
-
-
-### Bootstrapping to get sampling distributions
-
-We bootstrap to obtain the sampling distributions for the means of each region in each trial.
-
-```{r, bootstrap_mean}
-bootstrap_mean <- function(x, n = 5000) {
-  if (is_list(x)) x = flatten_dbl(x)
-  iter = 1:n
-  map_dbl(iter, function(.x){
-    set.seed(.x)
-    mean(sample(x, length(x), replace = TRUE))
-  }) 
-}
-data.sim.boot.12reg = data.sim.12reg %>%
-  mutate(boot.mean = map(data, bootstrap_mean)) %>%
-  select(-c(mean, mu, sd))
- data.sim.boot.8reg = data.sim.8reg %>%
-  mutate( boot.mean = map(data, bootstrap_mean)) %>%
-  select(-c(mean, mu, sd))
-```
-
-We also calculate limits to get reasonable values for the ends of the axes.
-
-```{r}
-limits = rbind(data.sim.8reg, data.sim.12reg) %>%
-  mutate( 
-    mean = map_dbl(data, ~ mean(.x)),
-    se = map_dbl(data, ~sd(.x)/sqrt(length(.x))),
-    .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-    .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-  ) %>%
-  summarise(min = floor(min(.lower)) - 1, max = ceiling(max(.upper)) + 1) %>%
-  gather() %>%
-  magrittr::extract2("value")
-```
-
-We store the results (whether a region is profitable of or not based on the data-generating process) in a CSV file, so that we can evaluate a participants' responses as they take the trials.
-
-```{r, eval = FALSE}
-rbind(mutate(data.sim.12reg, nregions = n_region[[1]]), mutate(data.sim.8reg, nregions = n_region[[2]])) %>%
-  mutate(is_profit = ifelse(mu > 0, TRUE, FALSE)) %>%
-  dplyr::select(-c(data)) %>%
-  write.csv(file = "../data/true_effects.csv", row.names = FALSE)
-```
-
-## Visualizations
-
-### 1.1. Scatterplot of raw data with jitter
-
-In our study, we show participants a sample of 20 stores from each region (which contains 200 stores). The `raw data` condition simply shows the points, with the user having to infer the mean and uncertainty from the plot, and make a decision on whether the region is profitable or not.
-
-```{r, scatterplot, warning = FALSE}
-dat1 <- data.sim.12reg %>%
-  filter( trial == 3 & region_idx == 1 ) %>% unnest(data) %>% 
-  magrittr::extract2("data")
-```
-
-```{r}
-p <- data.sim.12reg %>%  
-  unnest( cols = c(data) ) %>%
-  filter( trial == 3 & region_idx == 1 ) %>%
-  ggplot(aes(x = NA, y = data)) + 
-  geom_jitter( width = 0.05, alpha = 0.7, alpha = 0.5) +
-  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  scale_y_continuous( limits = c(-9, 5), breaks = seq(-8, 5, by = 2) )  +
-  theme(legend.position = "none") +
-  ylab( "profit" )
-
-p <- data.sim.12reg %>%
-  filter( trial == 3 & region_idx == 1 ) %>%  
-  mutate( 
-    mean = map_dbl(data, ~ mean(.x)),
-    se = map_dbl(data, ~sd(.x)/sqrt(length(.x))),
-    .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-    .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-  ) %>%
-  ggplot() + 
-  geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  scale_y_continuous( limits = c(-9, 5), breaks = seq(-8, 5, by = 2) ) +
-  xlim(-3, 3)
-```
-
-
-```{r}
-p <- data.sim.12reg %>%
-  filter(trial == 3 & region_idx == 1) %>%
-  mutate(boot.mean = map(data, bootstrap_mean)) %>%
-  select(-c(mean, mu, sd)) %>%
-  mutate( quantiles = map(boot.mean, ~ quantile(., prob = seq(1/50, 1 - 1/50, by = 1/50))) ) %>%
-  unnest( cols = c(quantiles) ) %>%
-  group_by(region_idx) %>%
-  sample_n(nrow(.)) %>%
-  mutate( frame = 1:nrow(.)) %>%
-  ggplot(aes(x = NA, y = quantiles)) +
-  geom_point(size = 15, color = "#fafafa") +
-  geom_hline( yintercept = 0, alpha = 0.8, color = "red", size = 2 ) +
-  scale_y_continuous( limits = c(-9, 5), breaks = seq(-8, 5, by = 2) ) +
-  theme(
-    axis.text.y = element_blank(),
-    axis.title.y = element_blank(),
-    axis.ticks.y = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
-  ) +
-  gganimate::transition_manual( frame )
-
-gganimate::animate(p, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-gganimate::anim_save(filename = paste0('~/Desktop/comres/07-hops-m.gif'))
-```
-
-```{r}
-p <- data.sim.12reg %>%
-  mutate( boot.samples = map(data, bootstrap_samples)) %>%
-  select(-c(p_h1, mu, sd, effect_size, mean, data)) %>%
-  filter(trial == 3 & region_idx == 1) %>%
-  unnest( cols = c(boot.samples) ) %>%
-  mutate( frame = 1:nrow(.)) %>%
-  unnest( cols = c(boot.samples) ) %>%
-  group_by(region_idx) %>%
-  ggplot(aes(x = NA, y = boot.samples)) +
-  geom_jitter( width = 0.2, alpha = 0.7, size = 10, color = "#fafafa") +
-  geom_hline( yintercept = 0, size = 4, alpha = 0.8, color = "red" ) +
-  scale_y_continuous( limits = c(-9, 5), breaks = seq(-8, 5, by = 2) ) +
-  theme(
-    axis.text.y = element_blank(),
-    axis.title.y = element_blank(),
-    axis.ticks.y = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
-  ) +
-  gganimate::transition_manual( frame )
-
-gganimate::animate(p, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-gganimate::anim_save(filename = paste0('~/Desktop/comres/08-hops-b.gif'))
-```
-
-
-```{r}
-pdf(file = "~/Desktop/comres/02-ci-plot.pdf", useDingbats = FALSE, width = 8, height = 10)
-p
-dev.off()
-```
-
-
-
-```{r, scatterplot, warning = FALSE}
-data.sim.12reg %>%  
-  unnest( cols = c(data) ) %>%
-  filter( trial == 3 & region_idx == 2 ) %>%
-  ggplot(aes(x = NA, y = data)) + 
-  geom_jitter( width = 0.05, alpha = 0.7, alpha = 0.5) +
-  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  scale_y_continuous( limits = c(-9, 5), breaks = seq(-8, 5, by = 2) )  +
-  theme(legend.position = "none") +
-  ylab( "profit" )
-```
-
-Below, we generate these plots and save it as images to be used in the pilot study.
-
-```{r, scatterplot_save, fig.width = 3, fig.height = 4, eval = FALSE}
-for(i in 1:n_region[[1]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.12 <- data.sim.12reg %>%
-        filter( trial == j & region_idx == i ) %>%  
-        unnest( cols = c(data) ) %>%
-        ggplot(aes(x = NA, y = data)) + 
-        geom_jitter( width = 0.2, alpha = 0.7, size = 5) +
-        geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-        scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-        theme(legend.position = "none") +
-        ylab( "profit" )
-      
-      ggsave(filename = paste0('../plots/raw-data/12-regions/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p.12, device = "jpeg")
-  }
-}
-for(i in 1:n_region[[2]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.8 <- data.sim.8reg %>%
-        filter( trial == j & region_idx == i ) %>%  
-        unnest( cols = c(data) ) %>%
-        ggplot(aes(x = NA, y = data)) + 
-        geom_jitter( width = 0.2, alpha = 0.7, size = 5) +
-        geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-        scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-        theme(legend.position = "none") +
-        ylab( "profit" )
-      
-      ggsave(filename = paste0('../plots/raw-data/8-regions/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p.8, device = "jpeg") 
-  }
-}
-```
-
-### 2. Bootstrapped ensembles
-
-We bootstrap the mean for the sample of 20 points, and plot the means. The bootsrapped means are roughly the same as the sampling distribution of the mean.
-
-```{r, fig.width = 10, fig.height = 4}
-data.sim.boot.12reg %>%
-  filter(trial == 1) %>%
-  mutate( .value = map(boot.mean, ~sample(.x, 50))) %>%
-  unnest( .value ) %>%
-  ggplot(aes(x = NA, y = .value)) +
-  geom_point( position = position_jitter(width = 0.2), alpha = 0.5 ) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-  facet_wrap( . ~ region_idx, ncol = 4 )
-  #ggtitle( "Mean profit for a product in 10 different regions" )
-```
-
-### 3. Bootstrapped means with 95% CI
-
-This shows the mean point estimate and the 95% boostrapped confidence intervals for the data.
-
-```{r}
-data.sim.12reg %>%
-  filter( trial == 3 & region_idx == 1 ) %>%
-  mutate( 
-    mean = map_dbl(data, ~ mean(.x)),
-    se = map_dbl(data, ~sd(.x)/sqrt(length(.x))),
-    .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-    .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-  ) %>%
-  ggplot() + 
-  geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  scale_y_continuous( limits = c(-5, 7), breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) ) +
-  xlim(-3, 3)
-```
-
-
-```{r, plot-mean-ci, fig.width = 10, fig.height = 4, eval = FALSE}
-for(i in 1:n_region[[1]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.12 <- data.sim.12reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      mutate( 
-        mean = map_dbl(data, ~ mean(.x)),
-        se = map_dbl(data, ~sd(.x)/sqrt(length(.x))),
-        .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-        .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-      ) %>%
-      ggplot(aes(x = NA, y = mean)) + 
-      geom_pointinterval(point_size = 5, interval_size = 12) +
-      geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) ) +
-      ylab( "profit" )
-      
-      ggsave(filename = paste0('../plots/ci/12-regions/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p.12, device = "jpeg")
-  }
-}
-for(i in 1:n_region[[2]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.8 <- data.sim.8reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      mutate( 
-        mean = map_dbl(data, ~ mean(.x)),
-        se = map_dbl(data, ~sd(.x)/sqrt(length(.x))),
-        .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-        .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-      ) %>%
-      ggplot(aes(x = NA, y = mean)) + 
-      geom_pointinterval(point_size = 5, interval_size = 12) +
-      geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) ) +
-      ylab( "profit" )
-      
-      ggsave(filename = paste0('../plots/ci/8-regions/profits-t', j,'-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p.8, device = "jpeg") 
-  }
-}
-```
-
-
-#### 3.1 Confidence Interval plots to be shown as an example of the task
-
-```{r}
-data.sim.12reg %>%
-  filter( trial == 5 & region_idx == 1 ) %>%
-  rename( sample = data, population = mean) %>%
-  mutate( 
-    pop_mean = population,
-    mean = map_dbl(sample, ~ mean(.x)),
-    se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
-    .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-    .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-  ) %>%
-  ggplot() + 
-  geom_pointinterval(aes(x = 0, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-  #geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
-  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
-  scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) ) +
-  xlim(-3, 3)
-```
-
-```{r, fig.width = 10, fig.height = 4, eval = FALSE}
-for(i in 1:n_region[[1]]) {
-  p <- data.sim.12reg %>%
-    filter(trial == 5 & region_idx == i) %>%
-    rename(sample = data, population = mean) %>%
-    mutate( 
-      pop_mean = mu,
-      mean = map_dbl(sample, mean),
-      se = map_dbl(sample, ~sd(.x)/sqrt(length(.x))),
-      .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-      .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-    ) %>%
-    ggplot() + 
-    geom_pointinterval(aes(x = 0, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-    #geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
-    geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
-    scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-    scale_color_manual( values=c("#C44232", "#333333")) +
-    theme(legend.position = "none") +
-    ylab( "profit" ) +
-    xlim(-3, 3)
-  ggsave(filename = paste0('../plots/example/profits-t0-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
-}
-```
-
-
-#### 3.2 Attention check 
-
-THe next two sections are the graphs used in the attention check questions.
-
-```{r, fig.width = 10, fig.height = 4, eval = FALSE}
-for(i in 1:n_region[[1]]) {
-  p <- data.sim.12reg %>%
-    filter(trial == 3 & region_idx == i) %>%
-    rename(sample = data, population = mean) %>%
-    mutate( 
-      mean = limits[2] - 2 + runif(n()),
-      se = runif(n()) * 0.1 + 0.1,
-      .lower = gamlss.dist::qTF(0.025, mean, se, nu = nu),
-      .upper = gamlss.dist::qTF(0.975, mean, se, nu = nu)
-    ) %>%
-    ggplot() + 
-    geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-    # geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
-    geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
-    scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-    scale_color_manual( values=c("#C44232", "#333333")) +
-    theme(legend.position = "none") +
-    ylab( "profit" ) +
-    xlim(-3, 3)
-  ggsave(filename = paste0('../plots/attention/profit-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
-}
-```
-
-
-```{r, fig.width = 10, fig.height = 4, eval = FALSE}
-for(i in 1:n_regions) {
-  p <- data.sample %>%
-    filter(trial == 3 & region_idx == i) %>%
-    rename(sample = profit, population = data) %>%
-    mutate( 
-      pop_mean = limits[1] + 0.5,
-      mean = limits[1] +0.5,
-      se = 0.1,
-      .lower = qTF(0.025, mean, se, nu = nu),
-      .upper = qTF(0.975, mean, se, nu = nu)
-    ) %>%
-    ggplot() + 
-    geom_pointinterval(aes(x = 0.5, y = mean), fill = "#333333", point_size = 5, interval_size = 12) +
-    geom_point(aes(x = -0.5, y = pop_mean), color = "#C44232", size = 5) +
-    geom_hline( yintercept = 0, size = 1, color = "red", alpha = 0.5 ) +
-    scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-    scale_color_manual( values=c("#C44232", "#333333")) +
-    theme(legend.position = "none") +
-    ylab( "profit" ) +
-    xlim(-3, 3)
-  ggsave(filename = paste0('../plots/attention/noprofit-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
-}
-```
-
-### 4. Probability Density Function
-
-```{r, plot-mean-density}
-data.sim.boot.12reg  %>%
-  filter(trial == 2 & region_idx == 3) %>%
-  unnest( cols = c(boot.mean) ) %>%
-  ggplot( aes(x = NA, y = boot.mean) ) +
-  stat_halfeye(point_size = 5, interval_size = 8) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-  scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-  ylab( "profit" )
-```
-
-```{r, pred-density, fig.width = 10, fig.height = 4, eval = FALSE}
-for(i in 1:n_region[[1]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p <- data.sim.boot.12reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      unnest( cols = c(boot.mean) ) %>%
-      ggplot( aes(x = NA, y = boot.mean) ) +
-      stat_halfeye(point_size = 5, interval_size = 8) +
-      geom_hline( yintercept = 0, size = 1, alpha = 0.5, color = "red" ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-      ylab( "profit" )
-    ggsave(filename = paste0('../plots/halfeye/12-regions/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
-  }
-}
-for(i in 1:n_region[[2]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p <- data.sim.boot.8reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      unnest( cols = c(boot.mean) ) %>%
-      ggplot( aes(x = NA, y = boot.mean) ) +
-      stat_halfeye(point_size = 5, interval_size = 8) +
-      geom_hline( yintercept = 0, size = 1, alpha = 0.5, color = "red" ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-      ylab( "profit" )
-    ggsave(filename = paste0('../plots/halfeye/8-regions/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
-  }
-}
-```
-
-### 5.1 Hypothetical outcome plots (quantiles)
-
-```{r, hops, fig.width = 10, fig.height = 4}
-p <- data.sim.boot.8reg %>%
-  filter(trial == 3 & region_idx == 1) %>%
-  mutate( quantiles = map(boot.mean, ~ quantile(., prob = seq(1/50, 1 - 1/50, by = 1/50))) ) %>%
-  unnest( cols = c(quantiles) ) %>%
-  group_by(region_idx) %>%
-  sample_n(nrow(.)) %>%
-  mutate( frame = 1:nrow(.)) %>%
-  ggplot(aes(x = NA, y = quantiles)) +
-  geom_point(size = 5) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-  scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-  ylab( "profit" ) +
-  gganimate::transition_manual( frame )
-
-gganimate::animate(p, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-```
-
-```{r, pred-density, fig.width = 10, fig.height = 4, eval = FALSE}
-for(i in 1:n_region[[1]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.12 <- data.sim.boot.12reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      mutate( quantiles = map(boot.mean, ~ quantile(., prob = seq(1/50, 1 - 1/50, by = 1/50))) ) %>%
-      unnest( cols = c(quantiles) ) %>%
-      group_by(region_idx) %>%
-      sample_n(nrow(.)) %>%
-      mutate( frame = 1:nrow(.)) %>%
-      ggplot(aes(x = NA, y = quantiles)) +
-      geom_point(size = 5) +
-      geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-      ylab( "profit" ) +
-      gganimate::transition_manual( frame )
-      
-      gganimate::animate(p.12, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-      gganimate::anim_save(filename = paste0('../plots/hops-1/12-regions/profits-t', j, '-p0.5-', i, '.gif'))
-  }
-}
-for(i in 1:n_region[[2]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.8 <- data.sim.boot.8reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      mutate( quantiles = map(boot.mean, ~ quantile(., prob = seq(1/50, 1 - 1/50, by = 1/50))) ) %>%
-      unnest( cols = c(quantiles) ) %>%
-      group_by(region_idx) %>%
-      sample_n(nrow(.)) %>%
-      mutate( frame = 1:nrow(.)) %>%
-      ggplot(aes(x = NA, y = quantiles)) +
-      geom_point(size = 5) +
-      geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-      ylab( "profit" ) +
-      gganimate::transition_manual( frame )
-      
-      gganimate::animate(p.8, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-      gganimate::anim_save(filename = paste0('../plots/hops-1/8-regions/profits-t', j, '-p0.5-', i, '.gif'))
-  }
-}
-```
-
-### 5.2 Hypothetical outcome plots (raw data)
-
-```{r}
-bootstrap_samples <- function(x, n = 50) {
-  if (is_list(x)) x = flatten_dbl(x)
-  iter = 1:n
-  map(iter, function(.x){
-    set.seed(.x)
-    sample(x, length(x), replace = TRUE)
-  })
-}
-p <- data.sim.12reg %>%
-  mutate( boot.samples = map(data, bootstrap_samples)) %>%
-  select(-c(p_h1, mu, sd, effect_size, mean, data)) %>%
-  filter(trial == 3 & region_idx == 1) %>%
-  unnest( cols = c(boot.samples) ) %>%
-  mutate( frame = 1:nrow(.)) %>%
-  unnest( cols = c(boot.samples) ) %>%
-  group_by(region_idx) %>%
-  ggplot(aes(x = NA, y = boot.samples)) +
-  geom_jitter( width = 0.2, alpha = 0.7, size = 5) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-  scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-  ylab( "profit" ) +
-  gganimate::transition_manual( frame )
-gganimate::animate(p, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-```
-
-```{r, pred-density, fig.width = 10, fig.height = 4, eval = FALSE}
-data.samples.boot = data.sim.12reg %>%
-  mutate( boot.samples = map(data, bootstrap_samples)) %>%
-  select(-c(p_h1, mu, sd, effect_size, mean, data))
-for(i in 1:n_region[[1]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.12 <- data.samples.boot %>%
-      filter( trial == j & region_idx == i ) %>%
-      unnest( cols = c(boot.samples) ) %>%
-      mutate( frame = 1:nrow(.)) %>%
-      unnest( cols = c(boot.samples) ) %>%
-      group_by(region_idx) %>%
-      ggplot(aes(x = NA, y = boot.samples)) +
-      geom_jitter( width = 0.2, alpha = 0.7, size = 5) +
-      geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-      ylab( "profit" ) +
-      gganimate::transition_manual( frame )
-      
-      gganimate::animate(p.12, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-      gganimate::anim_save(filename = paste0('../plots/hops-2/12-regions/profits-t', j, '-p0.5-', i, '.gif'))
-  }
-}
-data.samples.boot = data.sim.8reg %>%
-  mutate( boot.samples = map(data, bootstrap_samples)) %>%
-  select(-c(p_h1, mu, sd, effect_size, mean, data))
-for(i in 1:n_region[[2]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p.8 <- data.samples.boot %>%
-      filter( trial == j & region_idx == i ) %>%
-      unnest( cols = c(boot.samples) ) %>%
-      mutate( frame = 1:nrow(.)) %>%
-      unnest( cols = c(boot.samples) ) %>%
-      group_by(region_idx) %>%
-      ggplot(aes(x = NA, y = boot.samples)) +
-      geom_jitter( width = 0.2, alpha = 0.7, size = 5) +
-      geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]] + 1, by = 2) )  +
-      ylab( "profit" ) +
-      gganimate::transition_manual( frame )
-      
-      gganimate::animate(p.8, nframes = 50, fps = 2.5, width = 360, height = 576, res = 72)
-      gganimate::anim_save(filename = paste0('../plots/hops-2/8-regions/profits-t', j, '-p0.5-', i, '.gif'))
-  }
-}
-```
-
-
-### 6. Quantile dot plots
-
-
-```{r, plot-mean-density}
-data.sim.boot.12reg %>%
-  filter(trial == 1 & region_idx == 2) %>%
-  unnest( cols = c(boot.mean) ) %>%
-  ggplot( aes(x = 0, y = boot.mean) )  +
-  stat_dots(position = "dodge", quantiles = 20, binwidth = 0.4, fill = "#4682B4", color = "#ffffff") +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-  scale_x_continuous(limits = c(-0.5, 3), breaks = 0) +
-  scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]], by = 2) ) +
-  ylab( "profit" )
-```
-
-
-```{r, dot-plots, fig.width = 10, fig.height = 4, eval = FALSE}
-for(i in 1:n_region[[1]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p <- data.sim.boot.12reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      unnest( cols = c(boot.mean) ) %>%
-      ggplot( aes(x = 0, y = boot.mean) )  +
-      stat_dots(position = "dodge", quantiles = 20, binwidth = 0.4, fill = "#4682B4", color = "#ffffff") +
-      geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-      scale_x_continuous(limits = c(-0.5, 3), breaks = 0) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]], by = 2) ) +
-      ylab( "profit" )
-    ggsave(filename = paste0('../plots/dotplot/12-regions/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
-  }
-}
-for(i in 1:n_region[[2]]) {
-  for(j in 1:(n_trials * length(mu_sd))) {
-    p <- data.sim.boot.8reg %>%
-      filter( trial == j & region_idx == i ) %>%
-      unnest( cols = c(boot.mean) ) %>%
-      ggplot( aes(x = 0, y = boot.mean) )  +
-      stat_dots(position = "dodge", quantiles = 20, binwidth = 0.4, fill = "#4682B4", color = "#ffffff") +
-      geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-      scale_x_continuous(limits = c(-0.5, 3), breaks = 0) +
-      scale_y_continuous( limits = limits, breaks = seq(limits[[1]] + 1, limits[[2]], by = 2) ) +
-      ylab( "profit" )
-    ggsave(filename = paste0('../plots/dotplot/8-regions/profits-t', j, '-p0.5-', i, '.png'), height = 8, width = 5, units = "in", dpi = 72, type = "cairo-png", plot = p, device = "png")
-  }
-}
-```
-
-### 7. Gradient plots
-
-```{r}
-data.sim.boot %>%
-  filter(trial == 2 & region_idx == 3) %>%
-  unnest( cols = c(boot.mean) ) %>%
-  group_by(region) %>%
-  ggplot(aes(y = boot.mean, x = NA)) +
-  stat_gradientinterval(fill = "blue", show_interval = TRUE) +
-  scale_alpha_continuous(range = c(0, 1)) +
-  facet_wrap( ~ region_idx, ncol = 5 ) +
-  labs( alpha = "density" ) +
-  geom_hline( yintercept = 0, alpha = 0.5, color = "red" ) +
-  ylim( limits )
-```
-

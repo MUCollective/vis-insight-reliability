@@ -17,7 +17,6 @@ library(randtoolbox)
 library(furrr)
 ```
 
-
 # Introduction
 The goal of this study is to investigate whether participants, when performing visual exploratory data analysis, perform some form of implicit multiple comparisons under a given incentive structure, and whether different visual representations may impact decision making. The multiple comparisons problem arises when participants are performing multiple hypothesis tests simultaneously, as the more number of inferences are attempted (i.e. comparisons performed), the more likely it is to get a False Positive Discovery. The relationship between the number of comparisons and the probability of making a False Discovery, conditional on the null hypothesis being true, is equal to $1 - (1 - \alpha)^n$, where $n$ is the number of comparisons performed.
 
@@ -62,7 +61,7 @@ Now that we have nailed down the variables in our experiment design we can begin
 
 ```{r}
 sample_size = 20 # num of points in each graph
-n_trials = 200 # num of trials, here we use a large number for CLT
+n_trials = 10000 # num of trials, here we use a large number for CLT
 n_region = c(1, 2, 4, 8, 12, 16) # num of possible multiple comparisons
 ```
 
@@ -73,7 +72,7 @@ First, we will simulate the data for the entire population. We use the function 
 
 ```{r}
 RNG_data = function (n_regions, n, p_null, .seed = 1) {
-  sobol(n_trials * n_regions, dim = n + 1, scrambling = 3, seed = .seed) %>% # gives a multivariate uniform distribution
+  sobol(n_trials * n_regions, init = FALSE, dim = n + 1, scrambling = 3, seed = .seed) %>% # gives a multivariate uniform distribution
     as_tibble(.name_repair = ~ gsub("X.", "V", make.names(., unique = TRUE))) %>%
     rename_at(vars("V1":paste0("V", n)), ~ stringr::str_replace(., 'V', "store_")) %>%
     rename(mu = X) %>%
@@ -84,12 +83,21 @@ RNG_data = function (n_regions, n, p_null, .seed = 1) {
 
 Let us break this down further. The function `sobol` returns a multivariate uniform distribution (where n = `sample_size + 1`). This multivariate distribution is a $m \times n$ vector (where $m = \textrm{# of trials}$). We then convert this into a tibble (using `as_tibble`) where each column represents one dimension of this multivariate uniform distribution. We then rename the columns to reflect the data that we are simulate. This is what the code looks like:
 
-```{r}
-sobol(n_trials * 1, dim = sample_size + 1, scrambling = 3, seed = 1) %>% 
-    as_tibble(.name_repair = ~ gsub("X.", "V", make.names(., unique = TRUE))) %>%
-    rename_at(vars("V1":paste0("V", sample_size)), ~ stringr::str_replace(., 'V', "store_")) %>%
-    rename(mu = X)
+```{r, fig.width = 16, fig.height = 9}
+sobol(n_trials * 1, init = FALSE, dim = sample_size + 1, seed = 14) %>% 
+  as_tibble(.name_repair = ~ gsub("X.", "V", make.names(., unique = TRUE))) %>%
+  rename_at(vars("V1":paste0("V", sample_size)), ~ stringr::str_replace(., 'V', "store_")) %>%
+  rename(mu = X)
 ```
+
+There's some issues with the random number generation, as indicated by the `pairs` plot here:
+
+```{r, fig.width = 16, fig.height = 9}
+sobol(200, init = FALSE, dim = 10, seed = 14) %>% 
+  as_tibble(.name_repair = ~ gsub("X.", "V", make.names(., unique = TRUE))) %>%
+  GGally::ggpairs()
+```
+
 
 We consider the first column of this multivariate distribution (`mu`) to indicate whether a region is, on average, profitable or not. We consider the remaining rows to represent the quantiles of a normal distribution. The other parameters of the normal distribution (mean and variance) are determined based on the value of `mu`. We will expand on this later.
 
@@ -133,6 +141,7 @@ Finally, as mentioned in Section 3.1, the random numbers generated for each stor
   summarise(data = list(profit), .groups = "drop") %>%
   mutate(data = map2(data, mu, ~ qnorm(.x, .y * 0.9))))
 ```
+
 The graph below shows what the simulated data looks like for 1 (out of the 200 simulated trials), when the number of possible comparisons is four:
 
 ```{r, fig.width = 12, fig.height = 3}
@@ -195,6 +204,7 @@ data.sample %>%
 Next, we need to determine a value for the probability of the null hypothesis being true $P(null)$. The False Discovery Rate would vary based on $P(null)$, and we would like to see this relationship, as well as how  $E(payout)$ is affected. To check for this, we first generate the data we will use to create graphs, and compute the uncorrected and Benjamini-Hochberg p-values.
 
 We first create the grid of `# comparisons` and `P(null)$ values:
+
 ```{r}
 (data.sample.grid = crossing(n_regions = n_region, p_null = seq(0.1, 0.9, by = 0.1)))
 ```
@@ -296,18 +306,66 @@ From the graphs above, we notice that if $p(null) <= 0.5$, we might not observe 
 
 However, different values of $\alpha$ might have an impact on the payout. Below, we calculate, for different incentive schemes, the value of $\alpha$ that maximises payout:
 
+We re-calculate the grid, with only one level of $p(null)$ but a greater number of trials to ensure asymptotic estimates. Like before, we save the data-structure to avoid recomputation. 
+
 ```{r}
-data.sample.p_val = data.sample %>%
-  filter(p_null == 0.8) %>%
+data.sample.unif.pnull_0.8 = crossing(n_regions = n_region, p_null = 0.8) %>%
   mutate(
-    p = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)
+    values = map2(n_regions, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
   ) %>%
-  select(-data)
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(n_regions, p_null, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop")
+
+effect_size = 0.9
+
+data.sample.pnull_0.8 = data.sample.unif.pnull_0.8 %>%
+  mutate(effect_size = effect_size) %>%
+  group_by(n_regions, p_null, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+
+saveRDS(data.sample.pnull_0.8, "sim_data_sample-pnull_0.8-n10000.rds")
+```
+
+We then perform the same sets of computations, where we compute the p-value and the adjusted p-value using the Benjamini-Hochberg and Bonferroni methods.
+
+```{r}
+data.sample.pnull_0.8 = readRDS("sim_data_sample-pnull_0.8-n10000.rds")
+
+data.sample.pnull_0.8.p_val = data.sample.pnull_0.8 %>%
+  ungroup() %>%
+  mutate(
+    p = map_dbl(
+      data, 
+      ~ t.test(.x, alternative = "greater")$p.value,
+      .progress = TRUE ))
+
+data.sample.pnull_0.8.stats = data.sample.pnull_0.8.p_val %>%
+  rename(p_uncorrected = p) %>%
+  group_by(n_regions, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  select(-data) %>%
+  pivot_longer(c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", names_prefix = "p_", values_to = "p")
+
+saveRDS(data.sample.pnull_0.8.stats, "sim_data_sample-stats-pnull_0.8-n10000.rds")
+```
+
+
+Next, we create an optimisation function which, for a given dataframe, alpha level, # of comparisons, and incentive structure, computes the optimal alpha level which maximises the payout
+
+```{r}
 alpha_optim = function(alpha, comparisons, method, TP_mult, FP_mult) {
-  data.sample.p_val %>%
+  data.sample.pnull_0.8.p_val %>%
     filter(n_regions == comparisons) %>%
     mutate( p = p.adjust(p, method = method) ) %>%
-    expand( nesting(region, mu, p), alpha = alpha ) %>%
+    mutate( alpha = alpha ) %>%
     group_by(alpha, trial) %>%
     mutate(
       reject_null = p < alpha, `mu > 0` = mu != 0, # reject or not?
@@ -320,58 +378,87 @@ alpha_optim = function(alpha, comparisons, method, TP_mult, FP_mult) {
     summarise(payout = mean(TP*TP_mult + TN - FN + FP*FP_mult)) %>%
     magrittr::extract2("payout")
 }
+```
+
+
+We then create a grid of different variables that our optimisation function uses as arguments: alpha level, # of comparisons, and incentive structure. We map over each unique combination of these levels and calculate the optimal alpha level at each point in our grid.
+
+```{r}
 plan(multisession, workers = 8)
+
 df.alpha_optimal = crossing(
   comparisons = n_region,
   method = c("BH", "bonferroni", "none"),
   nesting(TP_mult = c(1, 1, 1, 9), FP_mult = c(-1, -19, -9, -1))
 ) %>%
-  mutate(optim_alpha = future_pmap(list(comparisons, method, TP_mult, FP_mult), function(x, y, z, w) {
-    optimal = optimize(alpha_optim, interval = c(0, 1), comparisons = x, method = y, TP_mult = z, FP_mult = w, maximum = TRUE)
-    tibble(maximum = optimal$maximum, optimum = optimal$objective)
-  })) %>%
+  mutate(optim_alpha = future_pmap(
+    list(comparisons, method, TP_mult, FP_mult), 
+    function(x, y, z, w) {
+      optimal = optimize(alpha_optim, interval = c(0, 1), comparisons = x, method = y, TP_mult = z, FP_mult = w, maximum = TRUE)
+      tibble(maximum = optimal$maximum, optimum = optimal$objective)
+    },
+    .progress = TRUE)) %>%
   unnest(optim_alpha) %>%  
   mutate(method = ifelse(method == "none", "uncorrected", method))
+
 plan(sequential)
 ```
 
+
 Next, we expand our grid to include different values of $\alpha \in \{0.001, 0.005, 0.01, 0.02, 0.03, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.8\}$ and incentive schemes. We then calculate the number of TP, TN, FP and FN for each trial, at at each level of $\alpha$
 
+
 ```{r, fig.width = 12, fig.height = 6}
+data.sample.pnull_0.8.stats = readRDS("sim_data_sample-stats-pnull_0.8-n10000.rds")
+
 # what are the different FDRs that we want to control for?
 alphas = c(0.001, 0.005, 0.01, 0.02, 0.03, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.8) 
-data.sample.summary.alpha = data.sample.stats %>%
+
+plan(multisession, workers = 8)
+
+data.sample.pnull_0.8.summary.alpha = data.sample.pnull_0.8.stats %>%
   ungroup() %>%
-  filter(p_null == 0.8) %>%
-  expand(
-    nesting(region, mu, p, method, n_regions, p_null, trial), 
-    alpha = alphas,
-    nesting(TP_mult = c(1, 1, 1, 9), FP_mult = c(-19, -9, -1, -1))
-  ) %>%
-  group_by(method, n_regions, alpha, TP_mult, FP_mult, trial) %>%
-  mutate(
-    reject_null = p < alpha, `mu > 0` = mu != 0, # reject or not?
-    TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
-    FP = as.integer(!`mu > 0` & reject_null),
-    TN = as.integer(!`mu > 0` & !reject_null),
-    FN = as.integer(`mu > 0` & !reject_null)
-  ) %>%
-  summarise_at(.vars = vars(TP, FP, TN, FN), sum)
+  group_by(n_regions) %>%
+  group_split() %>%
+  future_map_dfr(
+    ~ crossing(., alpha = alphas, nesting(TP_mult = c(1, 1, 1, 9), FP_mult = c(-19, -9, -1, -1)))  %>%
+      group_by(method, n_regions, alpha, TP_mult, FP_mult, trial) %>%
+      mutate(
+        reject_null = p < alpha, `mu > 0` = mu != 0, # reject or not?
+        TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
+        FP = as.integer(!`mu > 0` & reject_null),
+        TN = as.integer(!`mu > 0` & !reject_null),
+        FN = as.integer(`mu > 0` & !reject_null)
+      ) %>%
+      summarise_at(.vars = vars(TP, FP, TN, FN), sum),
+    .progress = TRUE
+  )
+
+plan(sequential)
+
+
+data.sample.pnull_0.8.summary.Epayout = data.sample.pnull_0.8.summary.alpha %>%
+  mutate(payout = TP*TP_mult + TN - FN + FP*FP_mult) %>%
+  summarise(E_payout = mean(payout), .groups = "drop")
+
+saveRDS(data.sample.pnull_0.8.summary.Epayout, file = "sim_data_sample-Epayout-n10000.rds")
 ```
 
 We can then calculate the average expected payout across the set of trials as a function of $\alpha$. We also highlight the points where expected payout is maximum based on our optimisation calculation previously.
 
 ```{r, fig.width = 12, fig.height = 6}
-data.sample.summary.alpha %>%
-  mutate(payout = TP*TP_mult + TN - FN + FP*FP_mult) %>%
-  summarise(E_payout = mean(payout), .groups = "drop") %>%
+data.sample.pnull_0.8.summary.Epayout %>%
   ggplot() +
   geom_line(aes(x = alpha, y = E_payout, group = factor(n_regions), colour = n_regions)) +
-  geom_point(data = df.alpha_optimal, aes(x = maximum, y = optimum), color = "red", size = 1) +
+  geom_point(
+    data = filter(group_by(data.sample.pnull_0.8.summary.Epayout, method, n_regions, TP_mult, FP_mult), E_payout == max(E_payout)), 
+    aes(x = alpha, y = E_payout), color = "red", size = 1
+  ) +
   facet_grid(interaction(TP_mult, FP_mult) ~ method, scales = "free_y") +
   scale_x_log10() +
   theme_minimal()
 ```
+
 The figure above indicates that, when $p(null) = 0.8$, at each level # of comparison, the payout is maximised at values of $\alpha$ close to 0.05 only for the BH correction method. For the Bonferroni correction, the $\alpha$ value at which payout is maximum *increases* with increase in the # of possible comparisons, as Bonferroni is a very conservative correction that gives greater chance of FNs compared to the other methods. On the other hand, for the uncorrected strategy, the $\alpha$ value at which payout is maximum *decreases* with increase in the # of possible comparisons; this is because the uncorrected strategy admits a greater chance of FPs in multiple comparisons scenarios, and one should be more conservative in rejecting null hypotheses for optimal results.
 
 ## Comparisons with theoretical estimates
@@ -409,7 +496,8 @@ Next, we create a function which calculates the average false discovery rate and
 
 ```{r}
 fp_penalty = 19
-n_trials = 1000
+n_trials = 10000
+
 calculate_payout = function(alpha, p_null) {
   expand_grid(nregions = n_region, iter = 1:n_trials, mu = 0.9, sigma = 1) %>%
     uncount(nregions, .remove = FALSE, .id = "panel") %>%
@@ -443,13 +531,16 @@ We then create a grid of different $\alpha$ and $p(null)$ values which are passe
 
 ```{r}
 plan(multisession, workers = 8)
+
 data.sim.alpha_pnull = expand_grid(
     alpha = seq(0.01, 0.15, by = 0.01),
-    p_null = seq(0.04, 1, by = 0.02)
+    p_null = 0.8 #seq(0.04, 1, by = 0.02)
   ) %>%
   mutate(sim = future_map2(alpha, p_null, calculate_payout, .options = furrr_options(seed = TRUE), .progress = TRUE)) %>%
   unnest(sim)
+
 plan(sequential)
+
 data.sim.alpha_pnull %>%
   saveRDS(file = "simulation-invCDF-alpha_pnull.rds")
 ```
@@ -458,12 +549,15 @@ The following plot shows the simulated results of payout as a function of alpha 
 
 ```{r, fig.width = 12, fig.height = 3}
 data.sim.alpha_pnull = readRDS(file = "simulation-invCDF-alpha_pnull.rds")
+
 data.sim.alpha_pnull %>%
+  filter(p_null == 0.8) %>%
   group_by(alpha, method, nregions) %>%
   summarise(value = mean(E_pay), .groups = "drop") %>%
   ggplot() +
   geom_line(aes(x = alpha, y = value, colour = nregions, group = nregions)) +
   facet_grid(. ~ method) +
+  scale_x_log10() +
   theme_minimal()
 ```
 

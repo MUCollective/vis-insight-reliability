@@ -4,6 +4,7 @@ date: "10/28/2019"
 output: html_document
 ---
 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(knitr)
@@ -84,7 +85,6 @@ RNG_data = function (n_regions, n, p_null, .seed = 1) {
 
 Let us break this down further. The function `runif` returns a uniform distribution of length = `n_trials * n_regions`. We use the replicate function to create a multivariate uniform distribution of dimension `sample_size + 1`. We then convert this into a tibble (using `as_tibble`) where each column represents one dimension of this multivariate uniform distribution. We then rename the columns to reflect the data that we are simulate. This is what the code looks like:
 
-
 We consider the first column of this multivariate distribution (`mu`) to indicate whether a region is, on average, profitable or not. We consider the remaining rows to represent the quantiles of a normal distribution. The other parameters of the normal distribution (mean and variance) are determined based on the value of `mu`. We will expand on this later.
 
 The final two lines of the function are to add two columns, indicating `trial` and `region`.
@@ -97,16 +97,18 @@ RNG_data(n_regions = 1, sample_size, 1, 1)
 
 Let's take a look at the pairs plot of the generated multivariate normal distribution.
 
-```{r, fig.width = 16, fig.height = 9}
+```{r, fig.width = 16, fig.height = 9, eval = FALSE}
 RNG_data(n_regions = 1, sample_size, 1, 1) %>%
   select(starts_with("store")) %>%
   ggpairs(lower = list(continuous = wrap("points", alpha = 0.5), combo = wrap("dot", alpha = 0.5)))
 ```
 
-## The relationship between FDR and $\alpha$, if $p(null) = 1$
-First, we want to verify if we are simulating the data correctly, by comparing the False Discovery Rates under different multiple comparison scenarios to the theoretical estimate. We use $p(null) = 1$ to generate the data:
+# Verifying the simulation
 
-First, we create a grid of the different multiple comparison scenarios and valuess of $p(null)$:
+## The relationship between FDR and $\alpha$, if $p(null) = 1$
+The first step in verifying if we are simulating the data correctly is by comparing the False Discovery Rates under different multiple comparison scenarios to the theoretical estimate. We use $p(null) = 1$ to generate the data:
+
+First, we create a grid of the different multiple comparison scenarios while fixing the value of $p(null)$ at 1:
 
 ```{r}
 (.dat_sim = crossing(n_regions = n_region, p_null = 1))
@@ -179,7 +181,7 @@ data.sample = crossing(n_regions = n_region, p_null = 1) %>%
 
 Based on the p-values, we then either reject or do not reject the null hypothesis at a signficance level of $\alpha = 0.5$. We then calculate the number of True Positives (TP), True Negatives (TN), False Positives (FP) and False Negatives (FN) for every trial. Next, for every trial, we calculate whether there were any FPs (since we want to verify whether the presence of the multiple comparisons problem in our simulated data, which claims that as the number of comparisons increases, the probability of a False Positive finding also increases). Next we take the average of the presence of False Positives across the set of 200 trials to obtain an asymptotic value for the probability of finding a False Positive.
 
-We then compare the empirical values from our simulation to the theoretical estimate. For this simulation, we can see that as the number of comparisons ($x$) increases, the probability of a False Positive finding also increases as: $f(x) = 1 - (0.95)^x$. We can see from our results that this holds:
+We then compare the empirical values from our simulation to the theoretical estimate. For this simulation, we want to see that as the number of comparisons ($x$) increases, the probability of a False Positive finding also increases as: $f(x) = 1 - (0.95)^x$.
 
 ```{r}
 alpha = 0.05
@@ -201,9 +203,11 @@ data.sample %>%
   geom_line(aes(y = value, x = n_regions, color = name))
 ```
 
+We can see from our results (in the graph above) that this holds.
+
 ## Effect of p(null)
 
-Next, we need to determine a value for the probability of the null hypothesis being true $P(null)$. The False Discovery Rate would vary based on $P(null)$, and we would like to see this relationship, as well as how  $E(payout)$ is affected. To check for this, we first generate the data we will use to create graphs, and compute the uncorrected and Benjamini-Hochberg p-values.
+Next, we need to determine a value for the probability of the null hypothesis being true $P(null)$. The False Discovery Rate would vary based on $P(null)$, and we would like to see this relationship, as well as how $E(payout)$ is affected, before we select a particular value of $P(null)$. To check for this, we first generate the data we will use to create graphs, and compute the uncorrected and Benjamini-Hochberg p-values.
 
 We first create the grid of `# comparisons` and `P(null)$ values:
 
@@ -314,6 +318,10 @@ data.sample.stats.summary %>%
   theme_minimal()
 ```
 
+```{r}
+data.sample.stats.summary
+```
+
 
 
 In addition to the False Discovery rate, we need to evaluate how our proposed incentive structure changes for different values of `p(null)` (x-axis), for each level of the `# of possible comparisons`. We reward 1 point for each correct discovery (True Positive and True Negative), -1 for each False Negative, $-(1-\alpha)/alpha = -19$ for each False Positive:
@@ -332,7 +340,7 @@ From the graphs above, we notice that if $p(null) <= 0.5$, we might not observe 
 
 ## Impact of $\alpha$
 
-However, different values of $\alpha$ might have an impact on the payout. Below, we calculate, for different incentive schemes, the value of $\alpha$ that maximises payout:
+However, different values of $\alpha$ might have an impact on the payout. Below, we investigate whether in our simulations, the correction strategies control for FDR at a particular $\lpah$ level. We then compare payout under different incentive schemes and values of $\alpha$.
 
 We re-calculate the grid, with only one level of $p(null)$ but a greater number of trials to ensure asymptotic estimates. Like before, we save the data-structure to avoid recomputation. 
 
@@ -381,6 +389,7 @@ data.sample.pnull_0.8.stats = data.sample.pnull_0.8.p_val %>%
 
 saveRDS(data.sample.pnull_0.8.stats, "sim_data_sample-stats-pnull_0.8-n10000.rds")
 ```
+
 Next, we create an optimisation function which, for a given dataframe, alpha level, # of comparisons, and incentive structure, computes the optimal alpha level which maximises the payout
 
 ```{r}
@@ -403,36 +412,12 @@ alpha_optim = function(alpha, comparisons, method, TP_mult, FP_mult) {
 }
 ```
 
-
-We then create a grid of different variables that our optimisation function uses as arguments: alpha level, # of comparisons, and incentive structure. We map over each unique combination of these levels and calculate the optimal alpha level at each point in our grid.
-
-```{r}
-plan(multisession, workers = 8)
-
-df.alpha_optimal = crossing(
-  comparisons = n_region,
-  method = c("BH", "bonferroni", "none"),
-  nesting(TP_mult = c(1, 1, 1, 9), FP_mult = c(-1, -19, -9, -1))
-) %>%
-  mutate(optim_alpha = future_pmap(
-    list(comparisons, method, TP_mult, FP_mult), 
-    function(x, y, z, w) {
-      optimal = optimize(alpha_optim, interval = c(0, 1), comparisons = x, method = y, TP_mult = z, FP_mult = w, maximum = TRUE)
-      tibble(maximum = optimal$maximum, optimum = optimal$objective)
-    },
-    .progress = TRUE)) %>%
-  unnest(optim_alpha) %>%  
-  mutate(method = ifelse(method == "none", "uncorrected", method))
-
-plan(sequential)
-```
-
-
 Next, we expand our grid to include different values of $\alpha \in [0.001, 0.8]$. We then calculate the number of TP, TN, FP and FN for each trial, at at each level of $\alpha$
 
 ```{r, fig.width = 12, fig.height = 6}
-data.sample.pnull_0.8.stats = readRDS("sim_data_sample-stats-pnull_0.8-n10000.rds") %>%
-  pivot_longer(c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", names_prefix = "p_", values_to = "p")
+data.sample.pnull_0.8.stats = readRDS("sim_data_sample-stats-pnull_0.8-n10000.rds")
+  # pivot_longer(c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", names_prefix = "p_", values_to = "p")
+  ## already in long format...
 
 # what are the different FDRs that we want to control for?
 alphas = c(
@@ -466,7 +451,7 @@ plan(sequential)
 saveRDS(data.sample.pnull_0.8.summary.alpha, file = "sim_data_pr_sample-summary-alpha-n10000.rds")
 ```
 
-We employ different correction strategies to control for the False Discovery Rate. First, we would like to verify whether, in our simulation, the correction strategies are able to control for FDR at each level of $\alpha$. The red line below is $y = x$ line and indicates $\alpha = FDR$ i.e. it indicates if the False Discovery Rate is exactly equal to $alpha$. Any strategy which controls FDR at a particular $\alpha$ level will be close to or below this line.
+We employ different correction strategies (BH, Bonferroni, uncorrected) to control for the False Discovery Rate. But first, we would like to verify whether, in our simulation, the **correction strategies are able to control for FDR** at each level of $\alpha$. The red line below is $y = x$ line and indicates $\alpha = FDR$ i.e. it indicates if the False Discovery Rate is exactly equal to $alpha$. Any strategy which controls FDR at a particular $\alpha$ level will be close to or below this line.
 
 ```{r, fig.width = 12, fig.height = 3}
 data.sample.pnull_0.8.summary.alpha = readRDS(file = "sim_data_pr_sample-summary-alpha-n10000.rds")
@@ -476,7 +461,7 @@ data.sample.pnull_0.8.summary = data.sample.pnull_0.8.summary.alpha %>%
     FDR = ifelse((TP + FP), FP/(FP + TP), 0),
     FNR = ifelse((TN + FN), FN/(FN + TN), 0)
   ) %>%
-  summarise(E_FDR = mean(FDR), E_FNR = mean(FNR), .groups = "drop")
+  summarise(E_FDR = mean(FDR), E_FNR = mean(FNR), E_TN = mean(TN), E_TP = mean(TP), E_FP = mean(FP), E_FN = mean(FN), .groups = "drop")
 
 data.sample.pnull_0.8.summary %>%
   filter(alpha <= 0.2) %>%
@@ -484,11 +469,277 @@ data.sample.pnull_0.8.summary %>%
   geom_line(aes(x = alpha, y = E_FDR, group = factor(n_regions), colour = n_regions)) +
   geom_line(data = tibble(x = seq(0.001, 0.2, by = 0.001), y = x), aes(x, y), color = "red") +
   facet_grid(. ~ method, scales = "free_y") +
+  ylab("E(FDR)") +
   scale_x_log10() +
   theme_minimal()
 ```
 
+In the figure above, we observe that the Benjamini-Hochberg method accounts for multiple comparisons correct and controls the False-Discovery Rate at any particular value of $\alpha$. The Bonferroni method is an overly conservative estimate as the number of possible multiple comparisons increases, which will result in a high number of False Negatives. Finally, the uncorrected strategy does not account for multiple comparisons, as indicated by the high number of *expected false discoveries*.
+
+Now, assume that we are controlling for False Positives using a one-sided t-test at $\alpha = 0.05$. This implies $\Gamma$ = qnorm(0.95) = 1.645.
+
+Let $P(null) = p_{0}$. Now, consider a situation with no multiple comparisons. We want a participant who is not aware of the underlying value of $P(null)$, is risk-neutral and is making an inference at a particular statistical significance level, $\alpha$. The probabilities are:
+
+- false positive: $P(FP| p_{0}) = p_{0}\alpha$
+- true positive: $P(TP | p_{0}) = 1 - p_{0}\alpha $
+- false negative: $P(FN | p_{0}) = 1 - p_{0}(1 - \alpha)$ 
+- true negative: $P(TN | p_{0}) = p_{0} (1 - \alpha)$
+
+Next, we assume that the user has to make n comparisons. What is the expected false discovery rate i.e. the probability of at least one false positive:
+$E(FDR| p_{0}) = (1 - (1 - p_{0}\alpha)^n)$
+
+Similarly, the expected false negative rate:
+$E(FNR| p_{0}) = (1 - (p_{0} (1 - \alpha))^n)$
+
+However, a user does not know the value of $p_{0}$, so we would want to integrate over all values of $p_{0}$:
+
+$$
+\begin{align}
+E(FDR) 
+&= \int_{0}^{1} 1 - (1 - p_{0}\alpha)^n dp_{0} \\
+&= \frac{(1 - p_0\alpha)^{n+1}}{(n + 1)}\alpha + p_{0} \Biggr]_{0}^{1} \\
+&= 1 -  \frac{1 - (1 - \alpha)^{n+1}}{(n+1)\alpha} \\
+
+E(FNR) 
+&= \int_{0}^{1} 1 - ((1 - \alpha)p_{0})^n dp_{0} \\
+&= p_{0} - \frac{(p_{0}(1 -\alpha))^n}{n + 1}  \Biggr]_{0}^{1} \\
+&= 1 - \frac{(1 -\alpha)^n}{n + 1} \\
+\end{align}
+$$
+
+
+This suggests that False Discovery and False Negative Rates would vary based on the number of possible comparisons. As such, our incentives should as well.
+
+For n = 1, $E(FDR) = 0.025, E(FNR) = 0.025$
+For n = 4, $E(FDR) = 0.09512375, E(FNR) = \frac{1 + \alpha}{2}$
+
+```{r}
+e_fdr = function(n, alpha = 0.05) {
+  1 - (1 - (1 - alpha)^(n + 1))/(alpha*(n+1))
+}
+
+e_fnr = function(n, alpha = 0.05) {
+  1 -  ((1 - alpha)^n)/(n+1)
+}
+```
+
+
+
+```{r, fig.height = 8, fig.width = 12}
+# payout scheme
+df.payout = data.sample.pnull_0.8.summary %>%
+  filter(alpha <= 0.1) %>%
+  mutate(payout = (((1 - alpha)/alpha) * E_TP) + E_TN - (((1 - alpha)/alpha) * E_FP) - E_FN)
+
+df.payout %>%
+  ggplot() +
+  geom_line(aes(x = alpha, y = log(payout), group = method, colour = method)) +
+  facet_wrap( ~ n_regions, scales = "free_y") +
+  theme_minimal()
+```
+
+
+
+
+
+is making inference completely at random, the following are the probabilities of making an inference which is a:
+- true negative: $\int_{0}^{1} p_{0} dp_{0} = p_{0}^2/2$
+- false negative: $\int_{0}^{1} (1 - p_{0}) dp_{0} = p_{0} - p_{0}^2/2$ 
+- true positive: $\int_{0}^{1} (1 - p_{0}) dp_{0} = p_{0} - p_{0}^2/2$
+- false positive: $\int_{0}^{1} p_{0} dp_{0} = p_{0}^2/2$
+
+Let's illustrate this with a simulation of a risk-neutral individual who is unaware of the underlying value of $P(null)$. Because such an individual has no information, they should be guessing completely at random (i.e. $p = 0.5$). We achieve such a behavior with the following incentive scheme: TP: 1, TN: 1, FP: -1, FN: -1.
+
+```{r, simulation-1}
+sim1 = function(p = 0.8, n = 1e2) {
+  truth = rbinom(n, 1, prob = p)
+  decision = rbinom(n, 1, prob = 0.5)
+  TP = as.integer((truth == 1) & (decision == 1))
+  TN = as.integer((truth == 0) & (decision == 0))
+  FP = as.integer((truth == 0) & (decision == 1))
+  FN = as.integer((truth == 1) & (decision == 0))
+  sum(TP  + TN - FN - FP)
+}
+
+data.frame(x = 1:1e5) %>%
+  mutate(payout = map_dbl(x, ~ sim1())) %>%
+  ggplot() +
+  geom_histogram(aes(payout))
+```
+
+However, this relation tells us the relationship between a true and a false negative, and that between a true and a false positive, but it is unclear what the relationship is between a true positive and a true negative.
+
+In our sample, since $P(null) = 0.8$, a true *negative* is four times more likely than a false *negative* while a false *positive* is four times more likely than a true *positive*
+
+
+
+Thus, for $p_{0} = 0.8$ and $\alpha = 0.05$, the probabilities would be:
+- true negative: 0.76
+- false negative: 0.19
+- true positive: 0.01
+- false positive: 0.04
+
+From this, we know that a true negative is *76 times* more likely than a true positive. Given this, can we determine an incentive structure?
+
+|                |     Ground Truth    |
+| User Decision  | Positive | Negative |
+| Positive       |   76     |    -19   |
+| Negative       |   -4     |      1   |
+
+
+```{r, fig.height = 8, fig.width = 12}
+# payout scheme
+df.payout = data.sample.pnull_0.8.summary %>%
+  filter(alpha <= 0.1) %>%
+  mutate(payout = (((1 - alpha)/alpha) * 4 * E_TP) + E_TN - (((1 - alpha)/alpha) * E_FP) - (4 * E_FN))
+
+df.payout %>%
+  ggplot() +
+  geom_line(aes(x = alpha, y = log(payout), group = method, colour = method)) +
+  facet_wrap( ~ n_regions, scales = "free_y") +
+  theme_minimal()
+```
+
+$f(x) = 1 - (0.95)^x$
+
+
+```{r, eval = FALSE}
+data.sample.stats = readRDS("sim_data_pr_sample-stats-n10000.rds")
+
+alphas = c(
+  seq(0.001, 0.01, by = 0.001),
+  seq(0.01, 0.2, by = 0.01)
+)
+
+plan(multisession, workers = 8)
+
+data.sample.summary.alpha = data.sample.stats %>%
+  ungroup() %>%
+  group_by(trial) %>%
+  group_split() %>%
+  future_map_dfr(
+    ~ crossing(., alpha = alphas) %>%
+      group_by(method, p_null, n_regions, alpha, trial) %>%
+      mutate(
+        reject_null = p.value < alpha, `mu > 0` = mu != 0, # reject or not?
+        TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
+        FP = as.integer(!`mu > 0` & reject_null),
+        TN = as.integer(!`mu > 0` & !reject_null),
+        FN = as.integer(`mu > 0` & !reject_null)
+      ) %>%
+      summarise_at(.vars = vars(TP, FP, TN, FN), sum),
+    .progress = TRUE
+  )
+
+plan(sequential)
+
+saveRDS(data.sample.summary.alpha, file = "sim_data-all_pr-summary-alpha-n10000.rds")
+```
+
+How about some simulations?
+
+```{r}
+data.sample.summary.alpha = readRDS(file = "sim_data-all_pr-summary-alpha-n10000.rds")
+data.sample.summary.alpha
+```
+
+
+
+More simulations:
+
+
+
+```{r, fig.width = 12, fig.height = 3}
+n_1 = 2 # how much are we weighting FDRs 
+n_2 = 1 # how much are we weighting FNRs 
+
+# payout scheme
+df.payout = data.sample.pnull_0.8.summary %>%
+  filter(alpha <= 0.1) %>% 
+  mutate(payout = (n_1 * (1 - E_FDR) + n_2 * (1 - E_FNR)) * 10) # 10 is just multiplier of the entire payout
+
+d.BH  = df.payout %>%
+  filter(method == "BH")
+
+d.null  = df.payout %>%
+  filter(method == "uncorrected") 
+
+map_dfr(unique(d.BH$n_regions), ~ merge(filter(d.BH, n_regions == .), filter(d.null, n_regions == .), by = NULL)) %>%
+  filter(round(alpha.x, 4) %in% c(0.005, 0.01, 0.05, 0.10)) %>%
+  mutate(diff = payout.x - payout.y) %>%
+  # filter(n_regions.x == 2) %>%
+  ggplot() +
+  geom_line(aes(x = alpha.y, y = diff, group = factor(n_regions.x), colour = (diff >= 0))) +
+  facet_grid(. ~ alpha.x, scales = "free_y") +
+  scale_x_log10() +
+  # coord_cartesian(ylim = c(0, 10)) +
+  theme_minimal()
+```
+
+This is what the simulated payout looks like under different alphas using the incentive scheme from our previous study: 
+
+```{r, fig.width = 12, fig.height = 3}
+# original payout scheme
+df.payout = data.sample.pnull_0.8.summary %>%
+  filter(alpha <= 0.1) %>% 
+  mutate(payout = E_TP + E_TN - 9*E_FP - E_FN)
+
+d.BH  = df.payout %>%
+  filter(method == "BH")
+
+d.null  = df.payout %>%
+  filter(method == "uncorrected") 
+
+map_dfr(unique(d.BH$n_regions), ~ merge(filter(d.BH, n_regions == .), filter(d.null, n_regions == .), by = NULL)) %>%
+  filter(round(alpha.x, 4) %in% c(0.005, 0.01, 0.05, 0.10)) %>%
+  mutate(diff = payout.x - payout.y) %>%
+  ggplot() +
+  geom_line(aes(x = alpha.y, y = diff, group = factor(n_regions.x), colour = (diff >= 0))) +
+  facet_grid(. ~ alpha.x, scales = "free_y") +
+  scale_x_log10() +
+  theme_minimal()
+```
+
+
+```{r}
+data.sample.pnull_0.8.summary %>%
+  select(-E_FNR) %>%
+  filter(alpha <= 0.2) %>%
+  pivot_wider(names_from = method, values_from = E_FDR) %>%
+  mutate(E_FDR_diff = BH - uncorrected) %>%
+  ggplot() +
+  geom_line(aes(x = alpha, y = -E_FDR_diff, group = factor(n_regions), colour = n_regions)) +
+  # geom_line(data = tibble(x = seq(0.001, 0.2, by = 0.001), y = x), aes(x, y), color = "red") +
+  # facet_grid(. ~ method, scales = "free_y") +
+  scale_x_log10() +
+  theme_minimal()
+```
+
+
+What is the evidence that we need to 
+- given a particular alpha value, people should be incentivised to perform multiple comparisons correction if the number of regions changes. If people use an uncorrected strategy they will perform worse than a corrected strategy.
+- Payout(x, correction_strategy, n_regions): Payout(x | correction_strategy \in {bonferroni, BH}) > Payout(x | correction_strategy == uncorrected)
+- $argmax_\alpha E(payout | n regions, strategy = BH)$ is constant regardless of n regions
+- $argmax_\alpha E(payout | n regions, strategy = uncorrected)$ is not constant
+- $\exists \alpha_{BH} s.t. E(payout | nregions, strategy = BH, \alpha_{BH}) > E(payout | nregions, strategy = uncorrected, \alpha = \alpha_i) \forall \alpha_i \in (0,1)$
+- $\exists \alpha_{BH} \wedge \exists nregions s.t. E(payout | nregions, strategy = BH, \alpha_{BH}) >  E(payout | nregions, strategy = uncorrected, \alpha = \alpha_i) \forall \alpha_i \in (0,1)$
+
+if we pick a fixed alpha for every value of n_regions for an uncorrected strategy, eventually we will have an n_regions where BH strategy will dominate uncorrected
+
 However, this does not take into account any potential False Negatives. We want to present participants with a scenario which resembles real world decision making---in the real world, there are obvious penalties for False Negatives. Below, we attempt to define an incentive scheme which takes into account both the False Discovery Rate and the False Negative Rate:
+
+
+```{r, fig.width = 12, fig.height = 3}
+data.sample.pnull_0.8.summary %>%
+  filter(alpha <= 0.2) %>%
+  ggplot() +
+  geom_line(aes(x = alpha, y = E_FNR, group = factor(n_regions), colour = n_regions)) +
+  # geom_line(data = tibble(x = seq(0.001, 0.2, by = 0.001), y = x), aes(x, y), color = "red") +
+  facet_grid(. ~ method, scales = "free_y") +
+  scale_x_log10() +
+  theme_minimal()
+```
+
 
 ```{r, fig.width = 12, fig.height = 3}
 data.sample.pnull_0.8.summary %>%
@@ -502,7 +753,6 @@ data.sample.pnull_0.8.summary %>%
   theme_minimal()
 ```
 
-More interestingly, a multiplier on $E(FDR)$ yields quite interesting results...
 
 
 ## Comparisons with theoretical estimates

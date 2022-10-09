@@ -66,11 +66,6 @@ BE(\Gamma) = (1 - \lambda)Pr(T \in \Gamma)pFDR(\Gamma) + \lambda Pr(T \not\in \G
 $$
 
 
-
-Given the above definition of Bayes error, which is a measure of loss, for any particular value of $\lambda$, we would want $\lambda$ which minimizes $BE(\Gamma)$:
-
-
-
 ```{r}
 # Definitions of PDF and CDF of the p-value from [@hung_behavior_1997]
 # PDF of the p-value:
@@ -104,7 +99,11 @@ pFNR = function(alpha, p0, mu, sigma, n) {
   # pFNR = P(H = 1 | T != \gamma) = Pr(T != gamma | H = 1) * (1 - p0) / ((1 - p0) * Pr(T != gamma | H = 1) + p0 * Pr(T != gamma | H = 0))
   (1 - p0) * dist_p(alpha, mu, sigma, n) / ((1 - p0) * dist_p(alpha, mu, sigma, n) + p0 * (1 - alpha))
 }
+```
 
+Given the above definition of Bayes error, which is a measure of loss, for any particular value of $\lambda$, we would want $\lambda$ which minimizes $BE(\Gamma)$:
+
+```{r}
 # we need a value of lambda which minimises baes_error for a particular value of alpha integrated over all values of p0
 bayes_error = function(lambda, alpha, p0) {
   # the density of the test statistic, for a given mu, is

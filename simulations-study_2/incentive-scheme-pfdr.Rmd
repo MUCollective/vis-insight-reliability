@@ -1,0 +1,141 @@
+---
+title: "Simulation for determining an incentive scheme"
+author: "Abhraneel Sarma"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Determining an incentive scheme
+
+From Storey (2003), let the following be the possible outcomes from m hypothesis tests:
+
++-------------------+-------------+----------------+----------+
+|                   | Accept null | Reject null    |  Total   |
++===================+=============+================+==========+
+| Null true         |     U       |       V        |  $m_{0}$ |
++-------------------+-------------+----------------+----------+
+| Alternative true  |     T       |       S        |  $m_{1}$ |
++-------------------+-------------+----------------+----------+
+|                   |     W       |       R        |    m     |
++-------------------+-------------+----------------+----------+
+      
+According to Benjamini-Hochberg, 
+
+$$
+FDR = E(\frac{V}{R}|R>0)Pr(R>0)
+$$
+
+
+Storey argues that we are not interested in cases where no test is significant and defines positive False Discover Rate, $pFDR = E(\frac{V}{R}|R>0)$
+
+Suppose m identical tests of a null hypothesis versus an alternative hypothesis based on the statistics $T_1,T_2,...,T_m$ are performed. For a given significance region $\Gamma,$
+
+$$
+pFDR(\Gamma) = E(\frac{V(\Gamma)}{R(\Gamma)}|R>0)
+$$
+
+where $V(\Gamma)$ is the number of tests which are significant but the null is true and $R(\Gamma)$ is the total number of tests which are significant.
+
+$$
+pFDR(\Gamma) = Pr(H = 0|T \in \Gamma)
+$$
+
+by Bayes rule, 
+$$
+pFDR(\Gamma) = \frac{\pi_0 Pr(T \in \Gamma | H = 0)}{\pi_0 . Pr(T \in \Gamma | H = 0) + (1 - \pi_0) . Pr(T \in \Gamma | H = 1)}
+$$ 
+where $\pi_0 = Pr(H = 0)$
+
+For each test, we observe $T_i$, and we have to decide whether to classify $H_i$ as 0 or $H_i$ as 1. There are four possible outcomes for each test with two of them being misclassifications:
+
++-------------------+----------------------+----------------------+
+|                   | Classifiy $H_i$ as 0 | Classifiy $H_i$ as 1 |
++===================+======================+======================+
+| $H_i = 0$         |           0          |   (1 - $\lambda$     |
++-------------------+----------------------+----------------------+
+| $H_i = 1$         |       $\lambda$      |          0           |
++-------------------+----------------------+----------------------+
+
+The Bayes error (expected loss) of a classification rule is given by:
+
+$$
+BE(\Gamma) = (1 - \lambda)Pr(T \in \Gamma)pFDR(\Gamma) + \lambda Pr(T \not\in \Gamma)pFNR(\Gamma)
+$$
+```{r}
+# Definitions of PDF and CDF of the p-value from [@hung_behavior_1997]
+# PDF of the p-value:
+g_delta_p = function(p, mu, sigma, n) {
+  delta = mu / sigma
+  Z_p = qnorm(1 - p) # Z_p is the (1 - p)th percentile of the standard Gaussian distribution
+  dnorm(Z_p - sqrt(n) * delta) / dnorm(Z_p)
+}
+
+# CDF of the p-value:
+G_delta_p = function(p, mu, sigma, n) {
+  delta = mu / sigma
+  Z_p = qnorm(1 - p) # Z_p is the (1 - p)th percentile of the standard Gaussian distribution
+  1 - pnorm(Z_p - sqrt(n) * delta)
+}
+```
+
+
+$$
+\begin{align*}
+G_{\delta}(p) &= 1 - \Phi(Z_p - \sqrt(n)\delta) \\
+pFDR(\Gamma) &= \frac{Pr(H = 0).Pr(T \in \Gamma | H = 0)}{Pr(H = 0).Pr(T \in \Gamma | H = 0) + Pr(H = 1).Pr(T \in \Gamma | H = 1)} \\
+&= \frac{\pi_0.(1 - (1 - \alpha)^m}{\pi_0.\alpha + (1 - \pi_0) . Pr(p-value < \alpha | H = 1)} \\
+&= \frac{\pi_0.(1 - (1 - \alpha)^m}{\pi_0.\alpha + (1 - \pi_0) . G_\delta(\alpha | H = 1)} \\
+\end{align*}
+$$
+
+$$
+\begin{align*}
+FDR(\Gamma) &= E[\frac{V(\Gamma)}{R(\Gamma)}|R>0].Pr(R > 0), \\
+& \text{where, R is the # of significant findings and V is the # of False Positives} \\ 
+\\
+&\text{IS THIS CORRECT???}\\
+&= Pr(H = 0 | T \in \Gamma).Pr(R > 0) \\
+&=\frac{Pr(H = 0).Pr(T \in \Gamma | H = 0)}{Pr(H = 0).Pr(T \in \Gamma | H = 0) + Pr(H = 1).Pr(T \in \Gamma | H = 1)}.Pr(R > 0) \\
+&= \frac{\pi_0.\alpha}{\pi_0.\alpha + (1 - \pi_0) . Pr(\text{p-value} < \alpha | H = 1)}.Pr(R > 0) \\
+&= \frac{\pi_0.\alpha}{\pi_0.\alpha + (1 - \pi_0) . G_\delta(\alpha | H = 1)}.Pr(R > 0) \\
+&= \frac{\pi_0.\alpha}{\pi_0.\alpha + (1 - \pi_0) . G_\delta(\alpha | H = 1)}.f(m) \\
+& \text{where, m is the number of comparisons we perform} \\ 
+f(m) &= \pi_0.(1 - \alpha)^m + (1 - \pi_0).G_\delta(\alpha | H = 1)^m
+\end{align*}
+$$
+```{r}
+# unclear: what is a significance region?
+# is it a quantile?
+# or is a range of t-statistics
+# below I assume that it is a quantile but don't think it is quite right
+# (I am assuming there's a translation from gamma to quantile though?)
+pFDR = function(alpha, p0, mu, sigma, n) {
+  # p0: prior probability of the null
+  # pFDR = P(H = 0 | T = \gamma) = Pr(T >= gamma | H = 0) * p0 / (p0 * Pr(T >= gamma | H = 0) + (1 - p0) * Pr(T >= gamma | H = 1))
+  # Pr(T >= gamma | H = 0) is the p-value which has a uniform distribution over [0, 1] when the null is true
+  # Pr(T >= gamma | H = 1) requires us to consider the distribution of the p-value when the null is false
+  p0 * alpha / (p0 * alpha + (1 - p0) * dist_p(alpha, mu, sigma, n))
+}
+
+pFNR = function(alpha, p0, mu, sigma, n) {
+  # pFNR = P(H = 1 | T != \gamma) = Pr(T != gamma | H = 1) * (1 - p0) / ((1 - p0) * Pr(T != gamma | H = 1) + p0 * Pr(T != gamma | H = 0))
+  (1 - p0) * dist_p(alpha, mu, sigma, n) / ((1 - p0) * dist_p(alpha, mu, sigma, n) + p0 * (1 - alpha))
+}
+```
+
+Given the above definition of Bayes error, which is a measure of loss, for any particular value of $\lambda$, we would want $\lambda$ which minimizes $BE(\Gamma)$:
+
+```{r}
+# we need a value of lambda which minimises baes_error for a particular value of alpha integrated over all values of p0
+bayes_error = function(lambda, alpha, p0) {
+  # the density of the test statistic, for a given mu, is
+  # P(T in gamma): 1 - CDF(\sqrt(n) * mu / delta, 1)
+  pr = 1 - pnorm(qnorm(1 - alpha), sqrt(n) * mu / sigma, 1)
+  (1 - lambda) * pr * pFDR(alpha, p0, mu, sigma, n) + lambda * (1 - pr) * pFNR(alpha, (1 - p0), mu, sigma, n)
+}
+```
+

@@ -1,0 +1,756 @@
+---
+title: "Data generation for conducting simulations for the Visualisation Insights project"
+author: "Abhraneel Sarma"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(future)
+library(furrr)
+library(GGally)
+```
+
+
+```{r}
+n_trials = 1e4
+sample_size = 20
+alpha = 0.05
+```
+
+
+## Introduction
+
+In this document, we outline the steps involved in simulating a large dataset to compare different multiple comparisions scenarios in Null Hypothesis Significance Testing. Using these simulations we want to determine asymptotic False Discovery Rates, False Negative Rates, and determine a Loss function (see `incentive-scheme.Rmd`)
+
+## The RNG function
+
+First, we define a function `RNG_data` for our simulation (more details below):
+
+```{r}
+RNG_data = function (n_regions, n, p0, .seed = 1) {
+  set.seed(.seed)
+  replicate(n + 1, runif(n_trials * n_regions)) %>%
+    as_tibble(.name_repair = ~ gsub("X.", "V", make.names(., unique = TRUE))) %>%
+    rename_at(vars("V1":paste0("V", n)), ~ stringr::str_replace(., 'V', "store_")) %>%
+    rename(mu = X) %>%
+    mutate(mu = as.integer(mu > p0), trial = rep(1:n_trials, n_regions), region = rep(1:n_regions, each = n_trials)) %>%
+    select(trial, region, everything())
+}
+```
+
+Let us break this function down. The function `runif` returns a uniform distribution of length = `n_trials * n_regions`. We use the replicate function to create a multivariate uniform distribution of dimension `sample_size + 1`. We then convert this into a tibble (using `as_tibble`) where each column represents one dimension of this multivariate uniform distribution. We then rename the columns to reflect the data that we are simulate. This is what the code looks like:
+
+We consider the first column of this multivariate distribution (`mu`) to indicate whether a region is, on average, profitable or not. We consider the remaining rows to represent the quantiles of a normal distribution. The other parameters of the normal distribution (mean and variance) are determined based on the value of `mu`. We will expand on this later.
+
+The final two lines of the function are to add two columns, indicating `trial` and `region`.
+
+Thus, this is what the data looks like for 1 region. We use a large value for # of trials (`n_trials = 10,000`) to obtain an asymptotic estimate of False Discovery Rate under different correction procedures:
+
+```{r}
+RNG_data(n_regions = 1, n = 20, p0 = 1, .seed = 1)
+```
+
+Let's take a look at the pairs plot of the generated multivariate normal distribution.
+
+```{r, fig.width = 16, fig.height = 9, eval = FALSE}
+RNG_data(n_regions = 1, n = 20, p0 = 1, .seed = 1) %>%
+  select(starts_with("store")) %>%
+  ggpairs(lower = list(continuous = wrap("points", alpha = 0.5), combo = wrap("dot", alpha = 0.5)))
+```
+
+
+## Verifying the simulation
+
+### The relationship between FDR and $\alpha$, if $\pi_0 = 1$
+The first step in verifying if we are simulating the data correctly is by comparing the False Discovery Rates under different multiple comparison scenarios to the theoretical estimate. We use $\pi_0 = 1$ to generate the data:
+
+First, we create a grid of the different multiple comparison scenarios while fixing the value of $\pi_0 = Pr(H_0)$ at 1:
+
+```{r}
+m = c(1, 2, 4, 8, 12, 16, 20)
+(.dat_sim = crossing(m = m, p0 = 1))
+```
+For each point in this grid, we use the `RNG_data` function to simulate values for each store:
+
+```{r}
+.dat_sim = .dat_sim %>%
+  mutate(
+    values = map2(m, p0, ~ RNG_data(.x, n = sample_size, .y))
+  ) %>%
+  unnest(values)
+
+head(.dat_sim)
+```
+
+We then convert the data into the long format (we will subsequently summarise the data for each of the 20 stores into a list, which is not shown below):
+
+```{r}
+.dat_sim.long = .dat_sim %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p0, trial, region, mu)
+
+head(.dat_sim.long)
+```
+
+Finally, as mentioned in Section 3.1, the random numbers generated for each stores correspond to the quantiles of a normal distribution of mean 0.9 and standard deviation 1 (effect size = 0.9). Thus, after performing this transformation, for each trial and each region, we obtain 20 normally distributed data points, which represent the profits for the stores. These are contained in the `data` column of the following table:
+
+```{r}
+.dat_sim.norm = .dat_sim.long %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(data = map2(data, mu, ~ qnorm(.x, .y * 0.9)))
+
+head(.dat_sim.norm)
+```
+
+The graph below shows what the simulated data looks like for 1 (out of the 10,000 simulated trials), when the number of possible comparisons ($m$) is four:
+
+```{r, fig.width = 12, fig.height = 3}
+.dat_sim.norm %>%
+  filter(m == 4 & trial == 1) %>%
+  unnest(data) %>%
+  ggplot(aes(y = data, x = NA)) +
+  geom_jitter( width = 0.05, alpha = 0.7 ) +
+  facet_grid(. ~ region) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  labs(y = "Profit", x = "# of comparisons") +
+  theme_minimal() +
+  theme(
+    axis.ticks.x = element_blank(), 
+    axis.text.x = element_blank()
+  )
+```
+
+We then use the generated dataset to perform a one-sided t-test for the alternative hypothesis $H_1$: *is the average profit for the set of 20 stores in the sample* $> 0$? ($H_0$: the average profit for the set of stores $\ngtr 0$):
+
+```{r}
+alpha = 0.05
+
+data.sample = .dat_sim.norm %>%
+  mutate(p = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) %>%
+  select(-data) 
+```
+
+Based on the p-values, we then either reject or do not reject the null hypothesis at a signficance level of $\alpha = 0.5$. We then calculate the number of True Positives (TP), True Negatives (TN), False Positives (FP) and False Negatives (FN) for every trial. Next, for every trial, we calculate whether there were any FPs (since we want to verify whether the presence of the multiple comparisons problem in our simulated data, which claims that as the number of comparisons increases, the probability of a False Positive finding also increases). Next we take the average of the presence of False Positives across the set of 200 trials to obtain an asymptotic value for the probability of finding a False Positive.
+
+We then compare the empirical values from our simulation to the theoretical estimate. For this simulation, we want to see that as the number of comparisons ($x$) increases, the probability of at least one False Positive finding also increases as: $f(x) = 1 - (0.95)^x$. This is the Family Wise Error rate that correction strategies such as Bonferroni attempts to control.
+
+```{r}
+data.sample %>% 
+  mutate(reject_null = p < alpha, `mu > 0` = mu != 0) %>% # reject or not?
+  group_by(m, p0, trial) %>%
+  mutate(TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
+            FP = as.integer(!`mu > 0` & reject_null),
+            TN = as.integer(!`mu > 0` & !reject_null),
+            FN = as.integer(`mu > 0` & !reject_null),
+  ) %>%
+  summarise_at(.vars = vars(TP, FP, TN, FN), sum) %>% # calculates total number of TP, TN, FP, FN for each trial
+  # because \pi_0 = 1, here, FDR will always be equal to 1
+  # thus correcting for FDR is the same as correcting for FWER
+  summarise(FWER = mean(FP > 0), .groups = "drop") %>% # estimates Pr(FP) across the set of trial
+  mutate(`theoretical estimate` = 1 - 0.95^m) %>%
+  pivot_longer(cols = c(FWER, `theoretical estimate`)) %>%
+  ggplot() +
+  geom_point(aes(y = value, x = m, color = name)) +
+  geom_line(aes(y = value, x = m, color = name))
+```
+
+We can see from our results (in the graph above) that this holds. This means that, for $\pi_0 = 1$, in our simulated dataset, we observe the problem of multiple comparisions. Thus, should employ false discovery correction methods to account for the False Discovery Rate. 
+
+*TODO: does this hold for other values of $\pi_0$?*
+
+## Sim #1: Generating data to evaluate multiple comparisions
+
+However, what we ideally want to control for is the average False Discovery Rate, which is what is achieved by Benjamini-Hochberg (or other similar multiple comparisons correction). In the document `incentive-scheme.Rmd`, we will explore how different correction procedures (or the absence of one) impact False Discovery rates and False Negative Rates. The goal of this exercise will be to formulate a Loss function which rewards participants for True Positives and True Negatives, and penalises them for False Positives and False Negatives.
+
+We use simulation because as we illustrate in `incentive-scheme.Rmd`, it is not possible to determine a closed-form equation that provides the theoretical False Discovery Rate under a correction procedure such as the Benjamini-Hochberg, as it is entirely dependent on the data (Benjamini-Hochberg modifies the p-values based on the number of comparisions being performed; thus it depends on the empirical cumulative distribution of the p-values rather than the theoretical distribution). Below, we simulate datasets for our simulation study.
+
+### Step 1.1: Create datasets (and save them)
+
+We first simulate datasets for $m = 1$, at $\pi_0 \in \{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.8\}$
+
+We simulate datasets for $m \in \{1, 2, 4, 8, 12, 16, 20, 50\}$ and at $\pi_0 \in \{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.8\}$. This process is the same as described previously:
+
+(Note: we save the simulation as RDS files as it can take a long time to run)
+
+```{r, eval = FALSE}
+data.sample.m_sub15 = crossing(m = c(1, 2, 4, 8, 12), p_null = seq(0.1, 0.9, by = 0.1)) %>%
+  mutate(
+    values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
+  ) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p0, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(effect_size = effect_size) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m_sub15, "sim_data/sample-m_sub15-n10000.rds")
+
+data.sample.m15_20 = crossing(m = c(16, 20), p_null = seq(0.1, 0.9, by = 0.1)) %>%
+  mutate(
+    values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
+  ) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(effect_size = effect_size) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m15_20, "sim_data/sample-m15_20-n10000.rds")
+
+data.sample.m50 = crossing(m = c(50), p_null = seq(0.1, 0.9, by = 0.1)) %>%
+  mutate(
+    values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
+  ) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(effect_size = effect_size) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m50, "sim_data/sample-m50-n10000.rds")
+```
+
+### Step 1.2: Load the datasets
+
+```{r}
+data.sample.m_sub15 = readRDS("sim_data/sample-m_sub15-n10000.rds")
+data.sample.m15_20 = readRDS("sim_data/sample-m15_20-n10000.rds")
+data.sample.m50 = readRDS("sim_data/sample-m50-n10000.rds")
+```
+
+In the following step, we simulate how a perfect agent using one of the following three strategies---Uncorrected, Bonferroni, Benjamini-Hochberg---will behave, given our simulated dataset. We illustrate the calculations involved for $m = 4$:
+
+## Step 2.1: (Demo) estimate p-value for different multiple comparisions correction strategies
+
+```{r}
+# filter the larger dataset to only contain values for m == 4
+data.sample.m4 = data.sample.m_sub15 %>%
+  filter(m == 4)
+
+# next we calculate p-values using a one-sided t-test
+# this gives us the p-values for the uncorrected strategy
+data.sample.m4.pval = data.sample.m4 %>%
+  mutate(p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) %>%
+  select(-data) # remove any unnecessary (and large columns)
+
+# finally, we calculate the p-values for the BH and
+# Bonferroni correction strategies 
+data.sample.m4.stats = data.sample.m4.pval %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  )
+
+head(data.sample.m4.stats)
+
+# we convert the data into long-format
+# for future convenience
+data.sample.m4.stats = data.sample.m4.stats %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+```
+
+## Step 2.2: Estimate p-value for different multiple comparisions correction strategies (and save them):
+
+Below, we repeat this process for the entire simulated dataset. As this is a computationally intensive step, we again perform it and store it as RDS files.
+
+```{r}
+plan(multisession, workers = 8)
+
+data.sample.stats.m_sub15 = data.sample.m_sub15 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m_sub15, "sim_data/sample_stats-m_sub15-n10000.rds")
+
+data.sample.stats.m15_20 = data.sample.m15_20 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m15_20, "sim_data/sample_stats-m15_20-n10000.rds")
+
+data.sample.stats.m50 = data.sample.m50 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m50, "sim_data/sample_stats-m50-n10000.rds")
+```
+
+Finally, we combine each of the separate data-frames containing the estimated statistics into a single RDS file, which we will be using for our simulations:
+
+```{r}
+data.sample.stats = bind_rows(
+  readRDS("sim_data/sample_stats-m_sub15-n10000.rds"),
+  readRDS("sim_data/sample_stats-m15_20-n10000.rds"),
+  readRDS("sim_data/sample_stats-m50-n10000.rds")
+)
+
+saveRDS(data.sample.stats, "sim_data/sample_stats-n10000.rds")
+```
+
+
+## Sim #2: Generating data for Pr(null) = 0.5
+
+However, what we ideally want to control for is the average False Discovery Rate, which is what is achieved by Benjamini-Hochberg (or other similar multiple comparisons correction). In the document `incentive-scheme.Rmd`, we will explore how different correction procedures (or the absence of one) impact False Discovery rates and False Negative Rates. The goal of this exercise will be to formulate a Loss function which rewards participants for True Positives and True Negatives, and penalises them for False Positives and False Negatives.
+
+We use simulation because as we illustrate in `incentive-scheme.Rmd`, it is not possible to determine a closed-form equation that provides the theoretical False Discovery Rate under a correction procedure such as the Benjamini-Hochberg, as it is entirely dependent on the data (Benjamini-Hochberg modifies the p-values based on the number of comparisions being performed; thus it depends on the empirical cumulative distribution of the p-values rather than the theoretical distribution). Below, we simulate datasets for our simulation study.
+
+### Step 1
+
+We simulate datasets for $m \in \{1, 2, 4, 8, 12, 16, 20, 50\}$ and at $\pi_0  = 0.5$. This process is the same as described previously:
+
+(Note: we save the simulation as RDS files as it can take a long time to run)
+
+```{r, eval = FALSE}
+n_trials = 1e5
+effect_size = 0.9
+
+data.sample.m_sub15 = crossing(m = c(1, 2, 4, 8, 12), p_null = 0.5) %>%
+  mutate(
+    values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
+  ) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(effect_size = effect_size) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m_sub15, "sim_data/sample-m_sub15-n1e5.rds")
+
+data.sample.m15_20 = crossing(m = c(16, 20), p_null = 0.5) %>%
+  mutate(
+    values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
+  ) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(effect_size = effect_size) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m15_20, "sim_data/sample-m15_20-n1e5.rds")
+
+data.sample.m50 = crossing(m = c(50), p_null = 0.5) %>%
+  mutate(
+    values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))
+  ) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  mutate(effect_size = effect_size) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m50, "sim_data/sample-m50-n1e5.rds")
+```
+
+```{r}
+data.sample.m_sub15 = readRDS("sim_data/sample-m_sub15-n1e5.rds")
+data.sample.m15_20 = readRDS("sim_data/sample-m15_20-n1e5.rds")
+data.sample.m50 = readRDS("sim_data/sample-m50-n1e5.rds")
+```
+
+### Step 2
+
+Below, we repeat this process for the entire simulated dataset. As this is a computationally intensive step, we again perform it and store it as RDS files.
+
+```{r}
+plan(multisession, workers = 8)
+
+data.sample.stats.m_sub15 = data.sample.m_sub15 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m_sub15, "sim_data/sample_stats-m_sub15-n1e5.rds")
+
+data.sample.stats.m15_20 = data.sample.m15_20 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m15_20, "sim_data/sample_stats-m15_20-n1e5.rds")
+
+data.sample.stats.m50 = data.sample.m50 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m50, "sim_data/sample_stats-m50-n1e5.rds")
+```
+
+Finally, we combine each of the separate data-frames containing the estimated statistics into a single RDS file, which we will be using for our simulations:
+
+```{r}
+data.sample.stats = bind_rows(
+  readRDS("sim_data/sample_stats-m_sub15-n1e5.rds"),
+  readRDS("sim_data/sample_stats-m15_20-n1e5.rds"),
+  readRDS("sim_data/sample_stats-m50-n1e5.rds")
+)
+
+saveRDS(data.sample.stats, "sim_data/sample_stats-n1e5.rds")
+```
+
+## Sim #3: Generating data for alternate effect sizes
+
+### Step 1
+
+We simulate datasets for $m \in \{1, 2, 4, 8, 12, 16, 20, 50\}$ and at $\pi_0  = 0.5$. This process is the same as described previously:
+
+(Note: we save the simulation as RDS files as it can take a long time to run)
+
+```{r, eval = FALSE}
+n_trials = 1e4
+
+data.sample.m_sub15 = crossing(
+    m = c(1, 2, 4, 8, 12), 
+    p_null = c(0.5, 0.6, 0.7, 0.8, 0.9), 
+    effect_size = seq(0.3, 0.7, by = 0.1)
+  ) %>%
+  mutate(values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, effect_size, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m_sub15, "sim_data/sample-m_sub15-delta-n1e4.rds")
+
+data.sample.m15_20 = crossing(
+    m = c(16, 20), 
+    p_null = c(0.5, 0.6, 0.7, 0.8, 0.9), 
+    effect_size = seq(0.3, 0.7, by = 0.1)
+  ) %>%
+  mutate(values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, effect_size, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m15_20, "sim_data/sample-m15_20-delta-n1e4.rds")
+
+data.sample.m50.1 = crossing(
+    m = c(50), 
+    p_null = c(0.5, 0.6, 0.7, 0.8, 0.9), 
+    effect_size = c(0.3, 0.4)
+  ) %>%
+  mutate(values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, effect_size, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m50.1, "sim_data/sample-m50.1-delta-n1e4.rds")
+
+data.sample.m50.2 = crossing(
+    m = c(50), 
+    p_null = c(0.5, 0.6, 0.7, 0.8, 0.9), 
+    effect_size = c(0.5, 0.6)
+  ) %>%
+  mutate(values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, effect_size, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m50.2, "sim_data/sample-m50.2-delta-n1e4.rds")
+
+data.sample.m50.3 = crossing(
+    m = c(50), 
+    p_null = c(0.5, 0.6, 0.7, 0.8, 0.9), 
+    effect_size = c(0.7)
+  ) %>%
+  mutate(values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, effect_size, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+saveRDS(data.sample.m50.3, "sim_data/sample-m50.3-delta-n1e4.rds")
+```
+
+
+### Step 2
+
+Below, we repeat this process for the entire simulated dataset. As this is a computationally intensive step, we again perform it and store it as RDS files.
+
+
+```{r}
+data.sample.m_sub15 = readRDS("sim_data/sample-m_sub15-delta-n1e4.rds")
+plan(multisession, workers = 8)
+data.sample.stats.m_sub15 = data.sample.m_sub15 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m_sub15, "sim_data/sample_stats-m_sub15-delta-n1e4.rds")
+plan(sequential)
+
+rm(data.sample.stats.m_sub15, data.sample.m_sub15)
+```
+
+
+```{r}
+data.sample.m15_20 = readRDS("sim_data/sample-m15_20-delta-n1e4.rds")
+plan(multisession, workers = 8)
+data.sample.stats.m15_20 = data.sample.m15_20 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m15_20, "sim_data/sample_stats-m15_20-delta-n1e4.rds")
+plan(sequential)
+
+rm(data.sample.stats.m15_20, data.sample.m15_20)
+```
+
+
+```{r}
+data.sample.m50.1 = readRDS("sim_data/sample-m50.1-delta-n1e4.rds")
+plan(multisession, workers = 8)
+data.sample.stats.m50.1 = data.sample.m50.1 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m50.1, "sim_data/sample_stats-m50.1-delta-n1e4.rds")
+rm(data.sample.stats.m50.1, data.sample.m50.1)
+plan(sequential)
+
+data.sample.m50.2 = readRDS("sim_data/sample-m50.2-delta-n1e4.rds")
+plan(multisession, workers = 8)
+data.sample.stats.m50.2 = data.sample.m50.2 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m50.2, "sim_data/sample_stats-m50.2-delta-n1e4.rds")
+rm(data.sample.stats.m50.2, data.sample.m50.2)
+plan(sequential)
+
+data.sample.m50.3 = readRDS("sim_data/sample-m50.3-delta-n1e4.rds")
+plan(multisession, workers = 8)
+data.sample.stats.m50.3 = data.sample.m50.3 %>%
+  group_by(p_null) %>%
+  group_split() %>%
+  future_map_dfr( 
+    ~ mutate(., p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)),
+    .progress = TRUE
+  ) %>%
+  select(-data) %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    p_BH = p.adjust(p_uncorrected, "BH"),
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni")
+  ) %>%
+  pivot_longer(cols = c("p_uncorrected", "p_BH", "p_bonferroni"), names_to = "method", values_to = "p.value", names_prefix = "p_")
+saveRDS(data.sample.stats.m50.3, "sim_data/sample_stats-m50.3-delta-n1e4.rds")
+rm(data.sample.stats.m50.3, data.sample.m50.3)
+plan(sequential)
+
+bind_rows(
+  readRDS("sim_data/sample_stats-m50.1-delta-n1e4.rds"),
+  readRDS("sim_data/sample_stats-m50.2-delta-n1e4.rds"),
+  readRDS("sim_data/sample_stats-m50.3-delta-n1e4.rds")
+) %>%
+  saveRDS("sim_data/sample_stats-m50-delta-n1e4.rds")
+```
+
+Finally, we combine each of the separate data-frames containing the estimated statistics into a single RDS file, which we will be using for our simulations:
+
+```{r}
+data.sample.stats = bind_rows(
+  readRDS("sim_data/sample_stats-m_sub15-delta-n1e4.rds"),
+  readRDS("sim_data/sample_stats-m15_20-delta-n1e4.rds"),
+  readRDS("sim_data/sample_stats-m50-delta-n1e4.rds")
+)
+
+saveRDS(data.sample.stats, "sim_data/sample_stats-delta-n1e4.rds")
+```
+
+
+## Sim #3.2: Generating data for m = 1
+
+```{r}
+crossing(
+    m = 1, 
+    p_null = 0.6, 
+    effect_size = 0.3
+  ) %>%
+  mutate(values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, effect_size, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+```
+
+
+```{r}
+n_trials = 1e5
+
+data.sample.m1 = crossing(
+    m = 1, 
+    p_null = c(0.5, 0.6, 0.7, 0.8, 0.9), 
+    effect_size = seq(0.3, 0.7, by = 0.1)
+  ) %>%
+  mutate(values = map2(m, p_null, ~ RNG_data(.x, n = sample_size, .y, .seed = (.x * 10) + (.y * 10)))) %>%
+  unnest(values) %>%
+  pivot_longer(cols = starts_with("store_"), names_to = "store", names_prefix = "store_", values_to = "profit") %>%
+  group_by(m, p_null, effect_size, trial, region, mu) %>%
+  summarise(data = list(profit), .groups = "drop") %>%
+  group_by(m, p_null, effect_size, trial) %>%
+  mutate(
+    mu = mu*effect_size,
+    data = map2(data, mu, ~ qnorm(.x, mean = .y, sd = 1))
+  )
+
+data.sample.stats.m1 = data.sample.m1 %>%
+  group_by(p_null) %>%
+  mutate(p_uncorrected = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) %>%
+  select(-data)
+
+saveRDS(data.sample.stats.m1, "sim_data/sample_stats-m1-delta-n1e5.rds")
+```
+

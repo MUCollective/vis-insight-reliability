@@ -58,7 +58,7 @@ We follow Kale et al.'s study design and use an effect size of 0.9 (mean = 0.9, 
 
 # Simulating the data
 
-Now that we have nailed down the variables in our experiment design we can begin to siimulate the data. Before we begin, we set up the parameters which are relevant for our experiment design. We present participants with graphs of 20 points (sample size). To support multiple comparisons, we create graphs for at 6 different levels of "# of possible comparisons" as mentioned previously
+Now that we have nailed down the variables in our experiment design we can begin to simulate the data. Before we begin, we set up the parameters which are relevant for our experiment design. We present participants with graphs of 20 points (sample size). To support multiple comparisons, we create graphs for at 6 different levels of "# of possible comparisons" as mentioned previously
 
 ```{r}
 sample_size = 20 # num of points in each graph
@@ -181,7 +181,7 @@ data.sample = crossing(n_regions = n_region, p_null = 1) %>%
 
 Based on the p-values, we then either reject or do not reject the null hypothesis at a signficance level of $\alpha = 0.5$. We then calculate the number of True Positives (TP), True Negatives (TN), False Positives (FP) and False Negatives (FN) for every trial. Next, for every trial, we calculate whether there were any FPs (since we want to verify whether the presence of the multiple comparisons problem in our simulated data, which claims that as the number of comparisons increases, the probability of a False Positive finding also increases). Next we take the average of the presence of False Positives across the set of 200 trials to obtain an asymptotic value for the probability of finding a False Positive.
 
-We then compare the empirical values from our simulation to the theoretical estimate. For this simulation, we want to see that as the number of comparisons ($x$) increases, the probability of a False Positive finding also increases as: $f(x) = 1 - (0.95)^x$.
+We then compare the empirical values from our simulation to the theoretical estimate. For this simulation, we want to see that as the number of comparisons ($x$) increases, the probability of at least one False Positive finding also increases as: $f(x) = 1 - (0.95)^x$. This is the Family Wise Error rate that correction strategies such as Bonferroni attempts to control.
 
 ```{r}
 alpha = 0.05
@@ -194,16 +194,19 @@ data.sample %>%
             FN = as.integer(`mu > 0` & !reject_null),
   ) %>%
   summarise_at(.vars = vars(TP, FP, TN, FN), sum) %>% # calculates total number of TP, TN, FP, FN for each trial
-  mutate(FDR = ifelse(FP+TP == 0, 0, FP/(FP+TP))) %>% # calculates the average FDR for each trial
-  summarise(FDR = mean(FDR), .groups = "drop") %>% # estimates Pr(FP) across the set of trial
+  # because \pi_0 = 1, here, FDR will always be equal to 1
+  # thus correcting for FDR is the same as correcting for FWER
+  summarise(FWER = mean(FP > 0), .groups = "drop") %>% # estimates Pr(FP) across the set of trial
   mutate(`theoretical estimate` = 1 - 0.95^n_regions) %>%
-  pivot_longer(cols = c(FDR, `theoretical estimate`)) %>%
+  pivot_longer(cols = c(FWER, `theoretical estimate`)) %>%
   ggplot() +
   geom_point(aes(y = value, x = n_regions, color = name)) +
   geom_line(aes(y = value, x = n_regions, color = name))
 ```
 
 We can see from our results (in the graph above) that this holds.
+
+However, what we ideally want to control for is the average False Discovery Rate, which is what is achieved by Benjamini-Hochberg (or other similar multiple comparisons correction). However, we need different values of $\pi_0$ for that.
 
 ## Effect of p(null)
 
@@ -345,7 +348,7 @@ However, different values of $\alpha$ might have an impact on the payout. Below,
 We re-calculate the grid, with only one level of $p(null)$ but a greater number of trials to ensure asymptotic estimates. Like before, we save the data-structure to avoid recomputation. 
 
 ```{r}
-n_region = c(1, 2, 4, 8, 12, 16, 50, 100)
+n_region = c(1, 2, 4, 8, 12, 16, 20, 50, 100)
 
 data.sample.unif.pnull_0.8 = crossing(n_regions = n_region, p_null = 0.8) %>%
   mutate(

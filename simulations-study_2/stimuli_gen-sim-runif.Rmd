@@ -62,7 +62,7 @@ Now that we have nailed down the variables in our experiment design we can begin
 
 ```{r}
 sample_size = 20 # num of points in each graph
-n_trials = 100 # num of trials, here we use a large number for CLT
+n_trials = 1000 # num of trials, here we use a large number for CLT
 n_region = c(1, 2, 4, 8, 12, 16) # num of possible multiple comparisons
 ```
 
@@ -297,7 +297,7 @@ Next, we compute the TP/TN/FP/FN values, by controlling for alpha at the 0.05 le
 ```{r, fig.width = 12, fig.height = 3}
 data.sample.stats = readRDS("sim_data_pr_sample-stats-n10000.rds")
 
-alpha = 0.05
+alpha = 0.25
 
 data.sample.stats.summary = data.sample.stats %>%
   ungroup() %>%
@@ -439,7 +439,8 @@ data.sample.pnull_0.8.summary.alpha = data.sample.pnull_0.8.stats %>%
     ~ crossing(., alpha = alphas) %>%
       group_by(method, n_regions, alpha, trial) %>%
       mutate(
-        reject_null = p < alpha, `mu > 0` = mu != 0, # reject or not?
+        reject_null = p < alpha, # reject or not?
+        `mu > 0` = mu != 0, #
         TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
         FP = as.integer(!`mu > 0` & reject_null),
         TN = as.integer(!`mu > 0` & !reject_null),

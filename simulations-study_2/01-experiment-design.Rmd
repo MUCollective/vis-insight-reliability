@@ -521,21 +521,10 @@ estimate_average_payoff(data.sim.effect_size_varying.outcomes, 10, 10, 1, -30, -
 
 Based on the above explorations, we anticipate that $m \in \{12, 16, 20\}$, $\pi_0 = 0.7$ and $\delta = 0.4$ would likely allow us to detect differences between the use of a multiple comparisons strategy as opposed to an uncorrected strategy.
 
-The code below shows that the following combination of `seed` and `m` leads to highest effect size:
-- seed = 6748 and m = 12
-- seed = 6319 and m = 16
-- seed = 8533 and m = 20
-We should use this for generating our stimuli.
+We first define a function to simulate unique p-values given a seed, number of comparisons (m), mean (mu) and standard deviation (sd), probability of the null being true (p_null), alpha, and number of trials (ntrials)
 
-```{r, eval = FALSE}
-mu = 4
-sd = 10
-m = c(12, 16, 20)
-ntrials = 10
-p_null = 0.7
-alpha = 0.25
-
-simulate_pval = function(.seed) {
+```{r}
+simulate_pval = function(.seed, mu, sd, m, p_null, alpha, ntrials) {
   set.seed(.seed)
   
   crossing(m, p0 = p_null, alpha, trial = 1:ntrials) |>
@@ -545,9 +534,27 @@ simulate_pval = function(.seed) {
     unnest(c(`mu > 0`)) |>
     mutate(p_uncorrected = map2_dbl(`mu > 0`, m, ~ ifelse(.x == 0, runif(1, 0, 1), rp(mu, sd, .y))))
 }
+```
+
+The code below shows that the following combination of `seed` and `m` leads to highest effect size:
+
+- seed = 6748 and m = 12
+- seed = 6319 and m = 16
+- seed = 8533 and m = 20
+
+We should use this for generating our stimuli.
+
+
+```{r, eval = FALSE}
+mu = 4
+sd = 10
+m = c(12, 16, 20)
+ntrials = 10
+p_null = 0.7
+alpha = 0.25
 
 df.seed.stimuli = tibble(.seed = 1:1e4) |>
-  mutate(.sim = map(.seed, simulate_pval)) |>
+  mutate(.sim = map(.seed, simulate_pval, mu, sd, m, p_null, alpha, ntrials)) |>
   unnest(.sim) |>
   group_by(.seed, m, trial) |>
   mutate( p_BH = p.adjust(p_uncorrected, "BH") ) |>
@@ -573,11 +580,28 @@ df.seed.stimuli |>
   arrange(desc(effect_size))
 ```
 
+
 ```{r}
-df.seed.stimuli |>
+tibble(.seed = c(6748, 6319, 8533)) |>
+  mutate(.sim = map(.seed, simulate_pval, mu, sd, m, p_null, alpha, ntrials)) |>
+  unnest(.sim) |>
+  group_by(.seed, m, trial) |>
   filter(
     (.seed == 6748 & m == 12) | (.seed == 6319 & m == 16) | (.seed == 8533 & m == 20)
   ) |>
+  mutate( p_BH = p.adjust(p_uncorrected, "BH"), p_bonferroni = p.adjust(p_uncorrected, "bonferroni") ) |>
+  pivot_longer(cols = starts_with("p_"), names_prefix = "p_", names_to = "method", values_to = "p_val") |>
+  group_by(.seed, method, m, trial) |>
+  mutate(
+    reject_null = p_val < alpha,
+    TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
+    FP = as.integer(!`mu > 0` & reject_null),
+    TN = as.integer(!`mu > 0` & !reject_null),
+    FN = as.integer(`mu > 0` & !reject_null)
+  ) |>
+  summarise_at(.vars = vars(TP, FP, TN, FN), sum) |>
+  mutate( payoff = (TP - 3*FP)*5 + (TN - FN) ) |>
+  group_by(.seed, method, m) |>
   mutate(FDR = ifelse((FP + TP), FP/(FP + TP), 0)) |>
   pivot_longer(c(payoff, FDR), names_to = "outcome") |>
   group_by(.seed, method, m, outcome) |>
@@ -588,13 +612,126 @@ df.seed.stimuli |>
   theme(panel.spacing = unit(2, "lines"))
 ```
 
-```{r}
-x1 = rnorm(20, 0, 10)
 
-t.test(x1 + 4, alternative = "greater")$p.value
+```{r}
+generate_data = function(target, greater, N, mean, sd) {
+  mu = greater * mean
+  x = rnorm(N, mu, sd)
+  df = N - 1
+  
+  return( x + (qt(1 - target, df) * sd(x) / sqrt(N) - mean(x)) )
+}
+
+N = 20
+mean = 4
+sd = 10
+
+pilot.exp.stimuli = tibble(.seed = c(6748, 6319, 8533)) |> 
+  mutate(.sim = map(.seed, simulate_pval, mu, sd, m, p_null, alpha, ntrials)) |>
+  unnest(.sim) |>
+  group_by(.seed, m, trial) |>
+  filter( (.seed == 6748 & m == 12) | (.seed == 6319 & m == 16) | (.seed == 8533 & m == 20) ) |>
+  mutate(p_uncorrected = ifelse(p_uncorrected == 0, 0.001, p_uncorrected)) |> 
+  ungroup() |>
+  mutate( p_BH = p.adjust(p_uncorrected, "BH"), p_bonferroni = p.adjust(p_uncorrected, "bonferroni") ) |> 
+  mutate( data = map2(p_uncorrected, `mu > 0`, generate_data, N, mean, sd) )
+```
+
+
+```{r}
+pilot.exp.stimuli |> 
+  mutate(p.est = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) |> 
+  filter(round(p_uncorrected, 5) != round(p.est, 5))
+```
+
+
+
+### Graphs
+
+Before we generate the plots, we need to setup certain parameters to ensure consistency across each of the plots. First, we need to make sure the axis limits are consistent:
+
+```{r, axis-limits}
+N = 20
+df = N - 1
+
+limits = pilot.exp.stimuli |> 
+  mutate( 
+    mean = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.025, mean, se, nu = df),
+    .upper = gamlss.dist::qTF(0.975, mean, se, nu = df)
+  ) |> 
+  summarise(min = floor(min(.lower)) - 1, max = ceiling(max(.upper)) + 1) |> 
+  pivot_longer(c(min, max), names_to = "key") |> 
+  magrittr::extract2("value")
+```
+
+In addition, we want the graphs used as our stimuli to appear a certain way, which we define below:
+
+```{r, stimuli-theme}
+stimuli_theme = theme(
+   axis.title.x = element_blank(),
+   axis.text.x = element_blank(),
+   axis.title.y = element_text(size = 14),
+   axis.text.y = element_text(size = 12),
+   panel.grid.major.x = element_blank(),
+   panel.grid.minor.x = element_blank()
+  )
+```
+
+
+#### Mean + 95% Confidence Intervals
+
+```{r}
+pilot.exp.stimuli |> 
+  group_by(m, trial) |> 
+  mutate(.id = row_number()) |> 
+  select(.id, everything()) |> 
+  filter( m == 12 & trial == 1 & .id == 1) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.025, Profit, se, nu = df),
+    .upper = gamlss.dist::qTF(0.975, Profit, se, nu = df)
+  ) |> 
+  ggplot() + 
+  geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 5, interval_size = 12) +
+  geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+  scale_y_continuous( limits = limits ) +
+  xlim(-1, 1) +
+  stimuli_theme
 ```
 
 ```{r}
-map_dbl(seq(3, 5, by = 0.01), ~ t.test(x1 + ., alternative = "greater")$p.value)
+for (i in m) {
+  for (j in 1:ntrials) {
+    for (k in 1:i) {
+      p = pilot.exp.stimuli |> 
+        group_by(m, trial) |> 
+        mutate(.id = row_number()) |> 
+        select(.id, everything()) |> 
+        filter( m == i & trial == j & .id == k) |> 
+        mutate( 
+          Profit = map_dbl(data, ~ mean(.x)),
+          se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+          .lower = gamlss.dist::qTF(0.025, Profit, se, nu = df),
+          .upper = gamlss.dist::qTF(0.975, Profit, se, nu = df)
+        ) |> 
+        ggplot() + 
+        geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 5, interval_size = 12) +
+        geom_hline( yintercept = 0, color = "red", alpha = 0.5 ) +
+        scale_y_continuous( limits = limits ) +
+        xlim(-1, 1) +
+        stimuli_theme
+      
+      ggsave(filename = paste0('../plots/pilot-2023/ci-95/0', k, 'profits-m', i,'-p0.7-', j, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+    }
+  }
+}
 ```
 
+
+
+#### Mean + 50% Confidence Intervals
+
+#### Data distribution

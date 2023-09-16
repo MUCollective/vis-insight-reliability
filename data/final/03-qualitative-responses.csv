@@ -1,0 +1,190 @@
+"user_id","Q96","vis","cummu_pay","avg_pay"
+"9768cb1b","I tried to see whether or not the line was over or under 0. One round I put all in profit but got loads of negative points. Hard task.","ci-50","-20590",-686.333333333333
+"fcad550e","I was looking to only mark something as positive if most of the curve appeared above 0","pdf","-4130",-137.666666666667
+"1d6f7335","nearly always not profitable - shorter lines shorter variables more likely to be a profit if further away from zero ","ci-50","550",18.3333333333333
+"e2c7cd2d","Over the second profit line then definitely profit","ci-50","-4120",-137.333333333333
+"e53c77f9","Gauging how much was above the line and deciding if that would mean a profit.","pdf","-13390",-446.333333333333
+"e84e7a3f","Tried to play it safe and go for 'profitable/not profitable' when it looked like a sure thing, but that didn't go too well for me! Started taking more risks/gambles as my points spiralled and by the end, there wasn't really too much of a strategy","ci-50","-4500",-150
+"47d0cf75","I simply only marked the graphs as profitable if it was it largely above zero otherwise not","pdf","-5220",-174
+"2e7940f6","I looked at how many dots were close to the 0 line and how many reached to the furthest point on each side to consider where the mean might be.","data-only","-19760",-658.666666666667
+"a3f937f7","I checked the graph and profitability indicator","ci-50","-18860",-628.666666666667
+"3eb726c4","Just likelihood based on number of dots above and below plus the shape","data-only","-13700",-456.666666666667
+"f3a73b85","i was careful not to take much risk and took into account which way was worse to be incorrect as ;losing 40 points was much better than 150.so i only went with dead certs for profit when above 5 for mean profit.","pdf","880",29.3333333333333
+"bbfd0067","Comparing the amount of profitable stores against the non profitable stores, while considering the value that each of them hold.","data-only","-16700",-556.666666666667
+"005030f5","Choosing all non-profitable unless the density distribution only had the very last end on zero/negative","pdf","1830",61
+"b7c2bcde","short lines on topside is good, long lines on bottom is good.","ci-50","-24840",-828
+"873c2656","could only go on what I could say try to estimate which was the greatest above or below the line","data-only","-14650",-488.333333333333
+"a10c783c","If the strategist put the dot above the profit line, generally I said it would be profitable. However when I kept accruing negative points, I did try and throw some random ones in there to see if it helped but unfortunately it did not and I kept getting further into the negative numbers.","ci-50","-10260",-342
+"1c2cfeb3","if it was above the first line on the positive sign then I would say it was making profit","ci-50","610",20.3333333333333
+"dbc21dfc","not sure","data-only","-23610",-787
+"df64269b","if the chart was above the line i said profitable","pdf","-6050",-201.666666666667
+"6971b859","I tried to work out if there were more dots above or below the red line.","data-only","-23500",-783.333333333333
+"fa84f2b6","Initially I selected regions that had on average more points above the 0 mark. However, I noticed that I was losing points quickly, probably because I selected unprofitable regions as profitable. I shifted my strategy to only selecting dots that are overwhelmingly above 0, not just above average. It still didn't work very well though.","data-only","-1220",-40.6666666666667
+"af52ddec","Added 50% to length of bars to see if it still indicated a profit (mad I know!)","ci-50","1150",38.3333333333333
+"f2dd291f","I was just trying to see if the average of the graph suggested a profit margin and I had no other special strategy.l","pdf","-1030",-34.3333333333333
+"8bfa16ec","Had a look at the graphs overall and see how all stores looked before making a decision. ","pdf","-9680",-322.666666666667
+"9bf10603","At first, I looked at the number of losses shown and how big these losses were.
+This strategy did not work. It is a very difficult task with only 10% of data available ","data-only","-3420",-114
+"d3fc9833","I tried to gauge the depth of the graph in both negative and positive positions.","pdf","-1110",-37
+"5bae65da","circle below line= no profit
+","ci-50","-19220",-640.666666666667
+"530c976f","Guesswork","ci-50","-22930",-764.333333333333
+"0d7dac72","I started looking intently at whether the entire bar was profitable or not, but after 2 rounds of that not working, and being penalised so hard because of the scoring system, after that I looked and just guessed because I knew there would be no way to get back to positive points","ci-50","-12930",-431
+"161134a2","If the point was higher than the middle line I went to profit and if it was level or lower I didn't.","pdf","-17350",-578.333333333333
+"47d263b5","seeing where the peak was on the graph then look at how sharp the spikes go into the neg side ","pdf","-4510",-150.333333333333
+"beae0dbd","Estimating on the more conservative side (usually not profit) the larger the error bars were","ci-50","-7410",-247
+"46994dc4","I prioritised towards non-profitable if I wasn't sure as it resulted in losing less points if I was wrong
+","data-only","-2150",-71.6666666666667
+"539f25bf","I tried to take an overview of where the profit dots were and how many there were.  Also if there were any higher up making a larger amount of profit.","data-only","-17350",-578.333333333333
+"f4c36d7b","I tried different strategies. If the median was significantly above or below zero I treated it as a likely correct estimate. For the cases where the probability was more or less equally distributed above and below zero I tried 1) selecting answers based on where the peak lies 2) skewing towards udnerestimating 3) skewing towards overestimating. None of those strategies seemed to work","pdf","-15110",-503.666666666667
+"66293e2c","I raised the profitability bar every time I got a negative score.","ci-50","-2050",-68.3333333333333
+"b960bcdc","Mostly just random but towards the end I started feeling like the ones with the mean more towards 0 were the profitable ones ","ci-50","-27260",-908.666666666667
+"5308d548","I tried to avoid selecting profitable unless I was very certain, due to the high losses of getting it wrong.","ci-50","1600",53.3333333333333
+"ef11a2e2","I tried to follow the instructions to work out how likely it was that they were profitable based on the graph. I used the length of the bar to determine how close to the line I was willing to go in terms of assuming profitability. As I was getting them wrong I was more suspicious of clicking profitable and tended towards more not profitable. When the scores improved, I was a bit more lenient. I have not done very well at this so perhaps have misunderstood something about the graphs. ","ci-50","-3380",-112.666666666667
+"2ca0e360","If it was below the line it was definitely not profitable and if it was above the line I looked at how far above it it was. It if was above 5 then it was profitable, if if not I would look for a small spread closer to the 5.","ci-50","-2070",-69
+"490bdcd6","initially if remotely above 0 mark as profitable
+overtime, profitable only if more likely than not","ci-50","-7550",-251.666666666667
+"caac5573","i used the peak to determine wether the store would be profitable which was clearly wrong as i got a horrendous score!","pdf","-15180",-506
+"9bb2d9e8","no specific strategy only going by the results in the examples","ci-50","-10660",-355.333333333333
+"010e009e","The biggest spread over the line got profitable, clearly I was not correct in doing this! Anything well below the line was assumed to be non profitable","ci-50","-5480",-182.666666666667
+"3a2db5ff","Looked at the circle of each line and compared it to how far up it was on each of the graph to determine profitability.","ci-50","-20580",-686
+"5e2a9918","I looked for a mean over 5 with a short certainty spread above and below 5.","ci-50","1480",49.3333333333333
+"e5bf7575","Mostly above 0 its profitable","pdf","-3540",-118
+"f86f9fa2","I tried to imagine that the 20 dots were representative. If there were significantly more dots above the zero than below, I predicted profitable. If it was fairly even, I erred on the side of caution and put non-profitable. I also took into consideration if there were outliers.","data-only","-7860",-262
+"c763458e","looking at where most of the density were - compared to zero line","pdf","1120",37.3333333333333
+"688cbdb2","If I did not think that a decision could be made I selected not profitiable","data-only","-8230",-274.333333333333
+"efb31a20","I would roughly guess the number of dots on each side of the red line and then look out for any dots which were spaced up very near the 20 and -20 lines.","data-only","-9520",-317.333333333333
+"36606af0","No strategy","ci-50","-2180",-72.6666666666667
+"9eca2d3a","Tried to see in what line the dot was","ci-50","-9250",-308.333333333333
+"a5370c9d","I would mark them as profitable if the markers were considerably higher than the red line.","ci-50","-8480",-282.666666666667
+"1597d6a9","Non profitable - everything negative + low positive with a wide error bar 
+Profitable - everything super high + low positives with a narrow error bar ","ci-50","-6010",-200.333333333333
+"a78e4705","I thought I had one and no matter what I would do to change it it seemed I was always losing points. I would look to see where the majority of the points were and where the highest and lowest one was and try to see which one had more points or the majority of the points were higher/lower and make my decision from there, but I was constantly losing points and with no way of knowing which of my decisions were right or wrong or why they were right or wrong it was hard for me to know if the strategy was working or not, so I kind of started to just go with my gut since it seemed to make no difference. It was really frustrating.","data-only","-10480",-349.333333333333
+"4bd45184","if the middle of the shape was above zero i said profitable, if not then I said not profitable","pdf","-7690",-256.333333333333
+"80cf1a36","As the consequences of labelling a non-profitable region as profitable were greater than the other way around if I had any doubt I labelled the region non-profitable. I looked at how much of the spread was above the line and if it wasn't very close to 100% I went with non-profitable.","pdf","2930",97.6666666666667
+"f94d5515","estimate what % of normal distribution was positive, as penalties were uneven if a curve was more than 25% under the x axis I marked as non profitable, as the penalty for being wrong was lower that way, in the beginning I went purely by the distribution and it went very badly","pdf","-3930",-131
+"1ac8b1a7","Looked at the spread above the mean - if all above the company would make profit.","pdf","-2930",-97.6666666666667
+"82b075c5","At first, wa simplt where ponts laid on the graph; then learnt likelihood based upon responses","ci-50","970",32.3333333333333
+"74f614e9","If the bar was too close to 0, but positive, I would guess non-profitable because the ""punishment"" for not seeing a profitable region was much lower than incorrectly identifying as profitable","ci-50","1530",51
+"8edb3492","for it to be profitable it had to me a good bit higher than the zero line, i thought it was better to be wrong about it being non-profitable than saying it was profitable then being wrong","ci-50","-11250",-375
+"ebcc3f94","try to analyze the graphs","pdf","-16800",-560
+"d1fc98bd","I tried going with my gut for where I thought the median would sit, and in the second set I tried quickly counting how many stores were operating at a loss and if there were <10, choose profit","data-only","-14490",-483
+"7a3475d4","Initially I largely trusted the distribution and if less than about 25% of the bell curve was below the profit line then I would mark it as profitable. But this didn't work very well and gradually I began only marking as profitable if about 90% was above the line and the middle of the bell curve was at around about 4 or higher","pdf","30",1
+"b496daac","Only selecting ones I was pretty sure was profeterble as profertable (+), as saying + when its - is a bigger loss than saying - if its +","pdf","2100",70
+"3526de6c","Followed the trend of each graph. If unclear/ profit/ no profit seemed 50/50, I would choose no profit made 
+","data-only","-14330",-477.666666666667
+"31e40a08","tried to work out the region with highest dots.","data-only","-24720",-824
+"78e9f53e","I tried to figure out the mean of the given data by looking at the data dispersion.","data-only","-17910",-597
+"b4de0afe","well looking at whether the figure was below the line and how high it went and how wide it was, however when in doubt chose non profitable as the loss would be less if wrong","pdf","-2950",-98.3333333333333
+"8a129262","Tried to roughly guess if more were in profit than not","data-only","-5070",-169
+"9f4980b0","If the peak was below 0 I'd usually weight that to mean unprofitable despite the low sample size.","pdf","-16290",-543
+"28d3937d","Working out which part of the graph was covered with the largest 'patch' (average number of stores).If larger this was profitable","pdf","-480",-16
+"a1bf3360","With that score... what strategy I guess","data-only","-13490",-449.666666666667
+"26bcc011","I tried to guess the rough average using both the number of dots above and below the line and also using how far up or down the graph the dots were","data-only","-13240",-441.333333333333
+"4f0b8111","Anything way above the line i put as profitable and below the line as unprofitable. Borderline I tended to put as unprofitable","pdf","-8900",-296.666666666667
+"df171152","dot with less spread in higher areas I chose as profitable and got more picky as time went on because I turned out to be wrong in earlier trials.","ci-50","-2530",-84.3333333333333
+"cc5fb281","Initially I was very risky and went with all stores with over 50% chance of being profitable. I changed to very conservatively picking only sure bets as my score was very low. ","pdf","-5970",-199
+"411f8e4e","Cancelling out dots on the plus vs minus side, by briefly visualising it.","data-only","-12500",-416.666666666667
+"8432e639","I mainly looked to see whether there were obviously more dots above or below the line and then checked for outliers that were high above the line or way below the central line.","data-only","-11200",-373.333333333333
+"16227dac","A high proportion of the normal curve was to be above the zero line to be confident enough to predict a profit, because the penalty for incorrectly predicting a profit was extremely high.  This game is unfair!","pdf","-10590",-353
+"b0306ab0","I just tried to read the graph as best as possible and predicted the profitability based on the width and height of the grey area and the numbers across the side.","pdf","-22470",-749
+"8832acf2","If I was unsure, I tended to play it safe to lose less points and go for unprofitable","pdf","-650",-21.6666666666667
+"ac6caafc","depending on wher the middle of the spread was compated to zero- if it was significantly over it was profit if not i was loss","pdf","-2050",-68.3333333333333
+"ad3f4a34","I caulcuted the highest profit and the highest loss","data-only","-29870",-995.666666666667
+"33ac4a14","Initially going on what appeared to have a better spread for profit\loss. After gaining negative points I became more cautious and would only pick profit when 75%+ seemed over the profit line","pdf","-8400",-280
+"8a7dee20","As the the role of a business manager, I was asked to make decisions based on sales data presented with graphs, but not all data was shown","data-only","-23710",-790.333333333333
+"5e8b602e","I tried to find a strategy based on the size and width of the shape, but I couldn't figure it out! ","pdf","-16190",-539.666666666667
+"d953085e","if it was entirely or mostly above the red line it would be profitable, otherwise unprofitable","ci-50","-20080",-669.333333333333
+"24691fc5","Average sales for both profit and non-profit stores","data-only","-21000",-700
+"22e9095c","Weighing up the quantity of points above and below the line","data-only","-18510",-617
+"285c7107","Assessed the graphs visually. ","data-only","-17440",-581.333333333333
+"8bebbd97","I looked at how dense the clusters were on either side of the 0 mark to decide whether or not they were profitable or not then looked for any outliers like a lone sample or two that were above or below the average and decided if i thought they were high or low enough to counteract my initial assumption.","data-only","-15400",-513.333333333333
+"15a24ef9","I simply selected profitable for the the ones where the whole range was above 0","ci-50","-8930",-297.666666666667
+"b6e81f5c","I just went with which looked like it was profitable or unprofitable at first glance","data-only","-17470",-582.333333333333
+"c39e8807","I was trying to count the dots above 0 compared to the dots below. I also tried to count the dots in the 20 and -20 section. My strategy doesn't seemed to be effective. I appear to have answered incorrectly the majority of the time","data-only","-27920",-930.666666666667
+"3c1643b0","I looked at the number and concentration of dots above and below the line. I also took into account any dots that were further above or below the line and used this information to make a best guess","data-only","-12400",-413.333333333333
+"ed249dd5","If there were a similar number of dots in the 'profit' and 'loss of profit' parts of the table, I selected 'not profitable', because if wrong, my penalty was less overall (only 40 compared to a much bigger hit of losing 150 points if I chose 'profit'). I tried to avoid choosing 'profit' unless there were a lot more dots in the 'profit' area of the table than the 'loss of profit' one.","data-only","-3640",-121.333333333333
+"46bf8d9c","I focused on the probability of the stores being profitable if they were considerably above the red line.","pdf","1390",46.3333333333333
+"8bd804bd","i picked the ones that looks profitable or not profitable","pdf","-23720",-790.666666666667
+"fdfa72c3","An estimate based on how many dots there were either side of 0 as well as how close or far from the line those dots were distributed","data-only","-8310",-277
+"55d0dcce","Assessing how many dots were above and below the breakeven line and also bearing in mind any outliers","data-only","-19390",-646.333333333333
+"b06ba71c","I tried to estimate the amount of profit of the stores in each graph by picturing the 200 stores and predicting if most of them would be above or below average.","data-only","-16910",-563.666666666667
+"9f0839da","i worked out the higher amount above the line was a profit","ci-50","-20480",-682.666666666667
+"2fb7a44f","purely by viewing the position of the marker on the scale","pdf","-7980",-266
+"07196019","Tried to pick the most profitable looking graphs and leaving the ones that looked unsure off and selected them as not profitable ","data-only","-12380",-412.666666666667
+"922a64b6","i tried to put as profitable those who were clearly above the 0. However, I noticed it has to do with the actual line shown. ","ci-50","-19350",-645
+"eb692a40","I tried to analyse the overall trends","data-only","-2950",-98.3333333333333
+"0da9d928","I did not take risk in choosing the graphs which have their mean point near 0. I selected them as non profitable.","ci-50","1310",43.6666666666667
+"caa96ee3","No strategy as such at the beginning but then decided to choose the ones that were higher on the graph, away from the 0 point","ci-50","-13070",-435.666666666667
+"9239279b","Confusion and a fear that I've missed a major point!! At first, I took it that if it was borderline 0 it was most likely under. And if it was over by a good way it was most likely above 1, particularly if the confidence line was short. Then, when my points were plummeting, I started trying to mix things up. At one point I tried to do the opposite of my instincts and then things seemed to get even worse. So then I was trying to do every so many I thought as a zero may be above to try and claw some back, but I ended up feeling terrible about my approach and completely lost. I'm in awe of those who've achieved a bonus!","ci-50","-9990",-333
+"ba612f7a","Initially I selected those with a vertical bar that was high in the profit graph, as profitable.  I particularly went for those with shorter bars.  I changed this to include bars that were higher in the graph once I realised I was in a negative. ","ci-50","-1730",-57.6666666666667
+"38532177","I looked at height and length of line then looked at only picking the highest lines ","ci-50","-9950",-331.666666666667
+"a8053c12","I select the ones with profit only if they were well above the zero mark. If they were slightly over, on the zero or under, I put it as a non profit.","ci-50","870",29
+"de6cc56f","If uncertain, it's less risky to mark a region as ""not profitable"" since the penalty for making an incorrect guess in that direction is lower compared to incorrectly marking a region as profitable","pdf","1790",59.6666666666667
+"35dc7146","clustering the ones closest around 0 and picking the ones out that were at + or - 20 unless the clusters were heavily towards - or +. I would often visualise a line based off where the clusters were","data-only","-14740",-491.333333333333
+"de67f9f3","i decided to just select not profitable unless very clearly it was in the positive numbers, over 5. not worth losing 150 points if i was unsure i said not profitable","pdf","1030",34.3333333333333
+"04bac030","i compared the number of dots above and below the red line","data-only","-17280",-576
+"77b0ff60","I tried to be conservative, only selecting profitable when the data was clear, as the potential loss for an incorrect profitable was so high.","pdf","70",2.33333333333333
+"d3c30eda","If it was positive, profitbale. If it was negative, non-profitable.","pdf","-17680",-589.333333333333
+"afa3fddb","I looked to see which area had the most spots","data-only","-16430",-547.666666666667
+"cad561c9","I picked the companies by where they where on the scale, I went for the companies that were above the 0 line to be profitable.","ci-50","-1510",-50.3333333333333
+"9bdf92bc","I tried to evaluate what was going to be profitable and failed miserably. Very interesting experiment,","ci-50","-6250",-208.333333333333
+"30ae9db6","when in doubt, place not profitable as the penalty is lower. 
+I also calculated the number of profitable locations for each section of trials to try and limit profitable selections, seems I started a bit late though","data-only","-5980",-199.333333333333
+"076154bc","I just went with what seemed to be the more likely based on the limited info.","data-only","-17170",-572.333333333333
+"fb56fac9","All below line np; all above line p; symmetrical about line np; majority below line np; large majority above line p; small majority above line np","pdf","-6280",-209.333333333333
+"e82d4e18","I looked for where the majority of the clusters were and compared to where the strays were higher or lower. although I think I did pretty bad at this.","data-only","-16300",-543.333333333333
+"030e4e4e","anything with 25% or more of the distribution below the red line went immediately to 'unprofitable'. As the trials went on it became clear that anything with distribution below the red line had greater probability to be 'unprofitable'. Selecting the borderline profitable cases was simply a judgment call based on experience of previous decisions.","pdf","1510",50.3333333333333
+"2741da8a","I tried to study it as I'm doing. ","ci-50","-1660",-55.3333333333333
+"4aef67db","Counting the dots at the start, but I believe that It's not the same worth for - and +","data-only","-8420",-280.666666666667
+"56dd5e2a","I eventually realised that only tasks where <5% of the bell curve fell below the profit line were worth recommending as profitable.","pdf","-250",-8.33333333333333
+"4d95ef40","I think I am good with graphs but I cannot understand how I did so badly points wise. Generally if the trend and confidence were clearly above the line there was a likely profit so I chose positive. I was getting frustrated as I don't understand why my points score was so bad","ci-50","-8860",-295.333333333333
+"450e616f","I really just tried to look at how much was above the 0 line, the strategy clearly didn't work well for me","pdf","-6620",-220.666666666667
+"9c197858","It was easy to see a proportion that were definitely not profitable, it was also easy to see the proportion that were definitely profitable. For the rest they had to be sufficiently high on the graph with a corresponding high mean.","ci-50","2090",69.6666666666667
+"d6f825f1","Well, the widest part generally had to be at or very close to 10 profit in order for me to select profitable. Then I would look at the spread of the bar - if it was narrow I would be more confident in my decision, if it was wide then I would exercise more caution and maybe pick not profitable. 
+
+For any unsure decisions I would revert to selecting unprofitable, because that had the least amount of negative consequences. The -150 points for selecting profitable and being wrong was a massive drawback, 3x the amount of drawback. So it was often not worth it to do that. ","pdf","1770",59
+"f4bf7267","if above zero, I set as profitable","pdf","400",13.3333333333333
+"0fac72a2","trial and error","ci-50","-9940",-331.333333333333
+"133dc931","I started off cautious, then partway through block 3 I decided to be even moreso because I remembered a comment about only expecting a certain amount of points in each round, and I realized that I might be selecting too many stores as being profitable and being too hopeful.","ci-50","1880",62.6666666666667
+"a8efcb19","I assumed if the average was in the profitable area then there is more of a chance of it being profitable","pdf","-850",-28.3333333333333
+"78c09656","I was basing it off how many stores were profitable or not profitable outside of the 20/-20 area. I believe I was putting too much into the lower side of the profit graph, and over compensating. Which I would do differently if I were to do it again.","data-only","-18520",-617.333333333333
+"063eacc0","I counted the amount of points above and below the red line. If there was more less than 7 points below the line I marked the graph as profitable.","data-only","-890",-29.6666666666667
+"781508c6","If the mean was above 0, selected. ","pdf","-20470",-682.333333333333
+"080f8198","first i'd see which side had most points, but then if it was close OR if sides had a noticeable quantity of points further from 0 i'd weigh them higher, as 1 point at lets say 25 is worth 10x points around the 2.5 mark.","data-only","-21530",-717.666666666667
+"6911046e","If the marker was smaller and in the profit region that I chose profit","ci-50","-8190",-273
+"91e298b2","If the bar dropped below the red line at all, and the location of the point.","ci-50","-10190",-339.666666666667
+"26c02061","looked at number above/below line and spread of them. Better clustering suggested more consistency","data-only","-15610",-520.333333333333
+"00c1f1a4","I looked to see on average how much of the shape was under the profit line, as well as the point. If the point was above, and most of the shaded area was above the line, it was profit, it it was mostly below, it was loss.","pdf","620",20.6666666666667
+"ade5438c","chose the ones that had more data above zero","data-only","-5070",-169
+"a0e4fb47","Seeing where the mean for each region was. For those that were borderline, I tended to say 'not profitable' to lose less money.","pdf","-9880",-329.333333333333
+"acb51347","Looking at the general shape of the dots and guessing where the centre point would be for the mean. If it seemed close, counting the dots below the zero. Ignoring the score as it just went relentlessly down!","data-only","-3680",-122.666666666667
+"44f80a24","If the peak of the curve was 4 or higher, I would assume it was profitable.  Otherwise, I would prefer to play it safe, knowing the penalities.","pdf","880",29.3333333333333
+"ff63d5ff","If borderline choose non-profitable, but beware of the length of the line on the graph.  Shorter lines mean that the results are more clustered and longer lines imply uncertainty.","ci-50","930",31
+"0abd8ac7","I tried to just where the majority of the portion was in comparison to the red line, if more so in profit margin, I would guess profitable. ","pdf","-2420",-80.6666666666667
+"6c6711af","I wasn't willing to risk that the stores were profitable if it was borderline.  I'd rather lose less points if I said they were non profitable than more points is they turned out to be profitable.","pdf","1780",59.3333333333333
+"a5eca292","if the graph showed more profit than loss I went with profit","data-only","-13770",-459
+"7875b05d","I selected the region where the dots were the widest as this seemed likely to have the highest population of dots although I only adopted this after the first round of trials.","data-only","-18460",-615.333333333333
+"116f3327","more points above the red line showed it was profitable","data-only","-17500",-583.333333333333
+"296582c9","Visually judged whether most dots were above or below the profit line.","data-only","-17380",-579.333333333333
+"cc403b67","Trying not to loose, rather than trying to gain.","pdf","1690",56.3333333333333
+"989d7e76","On the first trial I just chose anything above the line but afterwards I felt anything too close to the line even if it was above I should choose non profitable. ","ci-50","-3150",-105
+"e8a5c3fd","Amount of dots in profit/no profit regions and how high they are","data-only","-17860",-595.333333333333
+"3d29588e","Started by looking for the widest part of the bell curve to be above 0 so that on average I'd be right. I then saw I was losing more points this way so i had to be more cautious and only selected profitable if it was much further above 0 line.","pdf","-2390",-79.6666666666667
+"eb5da98f","I tried to see if the majority of the plot was above the 0 line. ","pdf","670",22.3333333333333
+"5d0064c2","i tried to see if the number of dots above the line was higher than below the line ","data-only","-3690",-123
+"11bba01d","If the mean was above 0, I chose profitable. If the mean was below 0, I chose not profitable. Based on my -24000 points, it seems like this wasn't always true...","pdf","-24000",-800
+"52bd0eee","Eyeballing and gut feel","data-only","-15150",-505
+"2a5dff9c","First, I used simple method of checking if the line was mostly above 0, and classing it as a profitable store, and if mostly below as not profitable. I then changed to see how many points I was losing at a time since I was never gaining. I tried using proximity of the line to 0. If it was close or touching I placed the region store as failing. Then I tried measuring with the dot depending on the side it was on would determine if the store was profitable or not profitable. I think I was losing less points when I classed when the line/dot was close or touching 0 as not profitable even if it was above the line, or mostly above and still touching it.","ci-50","-14300",-476.666666666667
+"cdd282a6","I marked them as profitable if thet were a good way into the profitable zone","pdf","250",8.33333333333333
+"4132e741","I counted the number of dots that were above the red line and the ones below and if there were more above the line i clicked that they were profitable and if there were more below the line I clicked not profitable","data-only","-23420",-780.666666666667
+"4c5ca131","Focusing on the central tendency (mean) within the confidence intervals and basing my assessment on that.","ci-50","-20820",-694
+"d9b38665","Not profitable: anything below or touching the red line as well as below the first grey line above the red line. Profitable: only if it was above the grey line above the red line.","ci-50","470",15.6666666666667
+"3ce2a645","I figured the more dots above the red line there were, the more profitable the store was","data-only","-2370",-79
+"5a8b740c","If the average shown was over 5, then I marked it as profitable. I also marked it if the variability was low and the average was close to this threshold.","ci-50","2260",75.3333333333333
+"70321cd3","If black line below zero no profit","ci-50","-9530",-317.666666666667
+"f99b147a","i was looking at where the marker was compared to the line and how big in size the marker was. larger marker = higher profit i thought","ci-50","-13640",-454.666666666667
+"5656c588","According to instructions","ci-50","-20230",-674.333333333333
+"8ab2da32","I'm sorry, but there was no real way of making informed decisions with the data presented, I'd say the task is absolutely impossible","ci-50","-5210",-173.666666666667
+"c4f0435a","I checked the size of the graphs along with the position and decided using a combination of the two which outcome was most likely","pdf","-10560",-352
+"25abe7ed","tried to maximise returns by the score value of profit/non profit","pdf","-14700",-490

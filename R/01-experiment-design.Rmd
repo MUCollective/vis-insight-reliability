@@ -1,6 +1,5 @@
 ---
 title: "Exploration of variance in low-probability binomial events"
-author: "Abhraneel Sarma"
 date: "`r Sys.Date()`"
 output: html_document
 ---

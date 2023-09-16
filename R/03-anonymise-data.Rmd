@@ -1,0 +1,142 @@
+---
+title: "Prolific data anonymisation, cleaning and bonus payments"
+output: html_document
+date: "2023-08-29"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+
+# function to anonymize worker ids
+anonymize <- function(x, algo="crc32"){
+  unq_hashes <- vapply(unique(x), function(object) digest::digest(object, algo=algo), FUN.VALUE="", USE.NAMES=TRUE)
+  unname(unq_hashes[x])
+}
+```
+
+## Introduction
+
+This document outlines the data cleaning and anonymisation processes that we use for our data. Note that we do not share certain files such as that containing participants Prolific IDs (which is downloaded directly from Prolific). We also modify the file containing responses that we downloaded from Qualtrics to hide participants Prolific ID.
+
+## Participants
+
+We load the data provided by Prolific and the logs that we collect in our database. We assign each participant a unique user ID. We then select participants which have completed the study (codes: APPROVED or AWAITING REVIEW)
+
+```{r}
+prolific_pids = c(
+  filter(
+    read.csv("../data/final/01-data-prolific.csv"), 
+    Completion.code == "CDK4LRCQ")$Participant.id)
+```
+
+Note: there are some issues with two participants, who we exclude. For anonymity reasons, we do not disclose their Prolific IDs. These participants appear to have taken the survey twice, presumably because they failed the attention check in their first attempt. We will filter them out
+
+## Database response records and data cleaning
+
+We store each participants' responses in Qualtrics. We import those responses and filter them on the list of participants who have successfully completed the study. We also include the **correct** responses i.e. whether a region is actually profitable or not based on the total population, and not just the sample provided.
+
+```{r load_data}
+dat = read.csv("../data/final/02-data-qualtrics.csv") |> 
+  filter(row_number() > 2) |> 
+  rename(
+    duration = Duration..in.seconds.,
+    browser = Q19_Browser,
+    version = Q19_Version,
+    os = Q19_Operating.System,
+    resolution = Q19_Resolution,
+    consent = do_you_consent,
+    user_id = PROLIFIC_PID
+  ) |> 
+  filter(user_id %in% prolific_pids) |>
+  mutate(user_id = anonymize(user_id)) |>
+  select(duration, resolution, Q96, X1_8regions_train_q1:X11_20regions_trial_q20, vis, trial_index_map, block_order, cummu_pay, user_id, nregions) 
+
+solutions = read.csv("../data/final/solutions.csv") |> 
+  rename(region_index = index, p_uncorrected = p)
+```
+
+In addition we collected qualitative responses regarding the strategies that participants used. These are stored in a separate file:
+
+```{r}
+dat |> 
+  mutate(avg_pay = strtoi(cummu_pay)/30) |> 
+  select(user_id, Q96, vis, cummu_pay, avg_pay) |> 
+  write.csv("../data/final/03-qualitative-responses.csv", row.names = FALSE)
+```
+
+
+We wrangle the data into a format convenient for subsequent modeling and add columns which help us identify group-level effects. Since each participant in our pilot study participated in 30 trials, we index the trial number for each participant. The trials are also divided into blocks of three, which we index separately. Finally, we compute the payout for each trial.
+
+```{r}
+vectorise_tim = function(x) {
+  as.numeric(stringr::str_split_1(str_replace_all(x, "[\\[\\]]", ''), ","))
+}
+
+vectorise_block = function(x) {
+  as.numeric(stringr::str_split_1(x, ","))
+}
+
+df.responses.long = dat |> 
+  pivot_longer(
+    cols = c(X1_8regions_train_q1:X11_20regions_trial_q20),
+    names_pattern = "X([0-9]+)_([0-9]+)regions_([A-Za-z]+)_q([0-9]+)",
+    names_to = c("index", "m", "task_type", "region_index"),
+    values_to = "response"
+  ) |>
+  filter(task_type != "train") |> 
+  mutate(
+    trial_index_map = map(trial_index_map, vectorise_tim),
+    block_order = map(block_order, 
+                      ~ vectorise_block(gsub('^([0-9]{2})([0-9]{2})([0-9]{2})$', '\\1,\\2,\\3', .))),
+    m = as.numeric(m),
+    index = as.numeric(index),
+    region_index = as.numeric(region_index),
+    response = ifelse(response == "Profitable", 1, 0),
+    trial = map2_dbl(trial_index_map, index, ~ .x[[.y]]),
+    block = map2_dbl(m, block_order, ~ which(.x == .y))
+  ) |> 
+  mutate(
+    attention_check = map_dbl(trial_index_map, ~ which(.x == 0)),
+    index = map2_dbl(index, attention_check, ~ ifelse(.x > .y, .x - 1, .x))
+  ) |> 
+  select(-trial_index_map, -block_order, -cummu_pay, -task_type)
+```
+
+
+We will need to provide bonus payments to participants. Below we calculate the bonuses. We do not provide bonuses to participants who's cumulative pay is below -1000 (excluding the results from the first block).
+
+```{r}
+min_bonus = -2000
+
+df.responses.long |> 
+  filter(trial != 0) |> 
+  inner_join(select(solutions, -starts_with("p_")), by = c("m", "trial", "region_index")) |> 
+  mutate(
+    tp = ifelse(response == 1 & positive == 1, 1, 0),
+    tn = ifelse(response == 0 & positive == 0, 1, 0),
+    fp = ifelse(response == 1 & positive == 0, 1, 0),
+    fn = ifelse(response == 0 & positive == 1, 1, 0)
+  ) |> 
+  group_by(user_id) |> 
+  filter(block > 1) |> 
+  summarise_at(vars(tp, tn, fn, fp), sum) |> 
+  mutate( payoff = tp*50 + tn*10 + fp*-150 + fn*-40 ) |> 
+  filter(payoff >= min_bonus) |> 
+  mutate(
+    payoff = payoff + abs(min_bonus),
+    bonus = round(9*payoff / max(payoff))/2
+  ) |> 
+  arrange(payoff) |> 
+  select(user_id, bonus) |> 
+  write.csv('bonus_payments.csv', row.names = FALSE)
+```
+
+## Anonymise the input data
+
+We use the following function to anonymisation the participants prolific IDs. This function generates a unique ID for each input value and provides a one-to-one mapping with the output. In other words the same input string will always result in the same output.
+
+```{r}
+# this creates a new DF where participants IDs are anonymised and the data is in the long format
+df.anon <- df.responses.long %>%
+  write.csv('../data/final/anonymised-data.csv', row.names = FALSE)
+```

@@ -1,0 +1,992 @@
+---
+title: "data analysis"
+output: html_document
+date: "2023-08-20"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(brms)
+library(modelr)
+library(tidybayes)
+library(ggdist)
+library(cowplot)
+library(wesanderson)
+library(bayesplot)
+
+# set up the global theme
+theme_set(theme_minimal())
+
+palette = c("#E63746", "#0c7489", "#f4a261", "#aa9f88", "#7fdbda", "#cce6c3", "#7398f0") 
+
+scale_colour_data = function() {
+  scale_colour_manual(values = palette)
+}
+
+scale_colour_benchmark = function() {
+  scale_colour_manual(values = c("#E63746", "#0c7489", "#f4a261", "#aa9f88"))
+}
+
+scale_colour_binary = function() {
+  scale_colour_manual(values = c("#457b9d", "#f07167"))
+}
+
+scale_fill_densities = function() {
+  scale_fill_manual(values = c("#7398f0", "#7fdbda", "#cce6c3"))
+}
+```
+
+
+## Introduction
+
+In this document, we outline the data analysis steps involved. First we load the anonymised and cleaned data (the steps to which are outlined in `03-anonymise-data.Rmd`).
+
+```{r}
+solutions = read.csv("../data/final/solutions.csv") |> 
+  rename(region_index = index, p_uncorrected = p) |> 
+  filter(m != 8)
+
+# the model was fit with different factor levels
+# for the `vis` variable
+df.responses.model = read.csv("../data/final/04-anonymised-data.csv") |> 
+  inner_join(solutions, by = c("m", "trial", "region_index"))
+
+df.responses = df.responses.model |> 
+  mutate(
+    vis = ifelse(vis == "data-only", "baseline", ifelse(vis == "ci-50", "CI", "PDF")),
+    vis = factor(vis, levels = c("PDF", "CI", "baseline"))
+  )
+
+alpha = 0.25
+```
+
+We then conduct some exploratory analyses to examine the properties of the data before we implement our pre-registered regression model.
+
+
+## Exploratory analysis
+
+### Understanding participants' responses:
+
+First, we take a look at which plots (based on the p-value) that participants are responding to as "Profitable" and which ones they are responding to as "Not Profitable". Below, we visualise the cumulative density function of the p-values visualised in the plots, for each participant and type of response ("Profitable" or "Not Profitable").
+
+```{r cdfs, fig.height = 3, fig.width = 12}
+df.responses |> 
+  group_by(vis, user_id, response) |>
+  summarise(p = list(p_uncorrected), .groups = "drop") |> 
+  mutate(
+    response = factor(response),
+    ecdf = map(p, ecdf),
+    y = list(seq(0, 1, by = 0.01)),
+    x = map2(y, ecdf, ~ quantile(.y, .x))
+  ) |> 
+  select(-p, -ecdf) |> 
+  unnest(c(x, y)) |> 
+  ggplot(aes(x = x, y = y, group = interaction(response, user_id), colour = response)) +
+  geom_line(alpha = 0.5) +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.2)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+  labs(x = "p-value", y = "cumulative density function") +
+  facet_grid(. ~ vis) +
+  scale_colour_binary()
+```
+We see that participants would typically select plots corresponding to smaller p-values (sometimes even less than $\alpha = 0.25$) as "Profitable". This is indicated by the cumulative density being close to ~1 as the p-value approaches 0.25. In both the PDF and baseline conditions, we observe a good degree of separation (between the red and blue lines), suggesting that participants are not simply randomly indicating regions as "Profitable". While, this is largely the case in the CI condition as well, we see that some participants may be marking plots with high p-values as "Profitable" consistently (as observed by the straighter red lines).
+
+### Payoff
+
+Next, we estimate payoff for each user, in every trial.
+
+```{r, fig.height = 4, fig.width = 12}
+df.responses.payoff = df.responses |> 
+  filter(trial != 0) |> 
+  mutate(
+    tp = ifelse(response == 1 & positive == 1, 1, 0),
+    tn = ifelse(response == 0 & positive == 0, 1, 0),
+    fp = ifelse(response == 1 & positive == 0, 1, 0),
+    fn = ifelse(response == 0 & positive == 1, 1, 0)
+  ) |> 
+  group_by(m, vis, block, trial, user_id) |> 
+  summarise_at(vars(tp, tn, fn, fp), sum) |> 
+  mutate( payoff = tp*50 + tn*10 + fp*-150 + fn*-40 )
+```
+
+To compare participants performances against some possible strategies that they may be using, we outline a few normative strategies, as well as idealised multiple comparisons correction strategies:
+
+- *uncorrected* strategy: participants will reject the null hypothesis (that the stores are not profitable i.e. select a plot as positive) if the lower bound of the visualised confidence interval is above zero
+- *mean-only* strategy: participants will reject the null hypothesis if the mean of the visualised data is above zero
+- *random* strategy: participants are reject the null hypothesis completely at random, with a 50% probability of selecting a plot as positive
+- *Benjamini-Hochberg* stragey: this is the ideal strategy for controlling False Discovery Rates at a particular $alpha$-level
+
+Our pilot study suggests that participants may be employing some form of multiple comparisons correction where they are rejecting the null hypothesis at some value $\alpha^{\prime} = \alpha/b$ for some constant $b \leq m$. If $b = m$, this would be analogous to the Bonferroni correction, which we believe is a stricter multiple comparisons criterion than what participants are actually doing.
+
+```{r}
+n_iter = 1000
+
+performance.at_random = solutions |> 
+  mutate(
+    .iter = list(1:n_iter), 
+    response = map(p_uncorrected, ~ rbinom(n_iter, 1, 0.5))
+  ) |> 
+  unnest(c(.iter, response)) |> 
+  group_by(m, trial) |> 
+  mutate(
+    reject_null = response,
+    tp = as.integer(positive & reject_null), # correctness of the decision
+    fp = as.integer(!positive & reject_null),
+    tn = as.integer(!positive & !reject_null),
+    fn = as.integer(positive & !reject_null)
+  ) |> 
+  summarise_at(vars(tp, tn, fp, fn), ~ sum(.)/n_iter) |> 
+  mutate(method = "random") 
+
+performance.normative_strategies = solutions |> 
+  group_by(m, trial) |> 
+  mutate(
+    p_mean_only = p_uncorrected, # so the user would pick any if p > 0.5
+    p_BH = p.adjust(p_uncorrected, "BH")
+  ) |> 
+  pivot_longer(cols = starts_with("p_"), names_prefix = "p_", names_to = "method", values_to = "p_val") |>
+  group_by(method, m, trial) |>
+  mutate(
+    method = ifelse(method == "uncorrected", "no correction", method),
+    reject_null = ifelse(method == "mean_only", p_val < 0.5, p_val < alpha),
+    tp = as.integer(positive & reject_null), # correctness of the decision
+    fp = as.integer(!positive & reject_null),
+    tn = as.integer(!positive & !reject_null),
+    fn = as.integer(positive & !reject_null)
+  ) |> 
+  summarise_at(.vars = vars(tp, tn, fn, fp), sum) |> 
+  ungroup() |> 
+  add_row(performance.at_random)
+
+performance.normative_strategies.rates = performance.normative_strategies |> 
+  group_by(method, m) |> 
+  summarise_at(vars(tp, tn, fp, fn), mean) |> 
+  mutate_at(vars(tp, tn, fp, fn), ~ ./m) |> 
+  mutate(m = factor(m), method = factor(method, levels = c("BH", "no correction", "mean_only", "random")))
+
+performance.normative_payoff = performance.normative_strategies |> 
+  mutate( payoff = tp*50 + tn*10 + fp*-150 + fn*-40 ) |> 
+  group_by(method, m) |> 
+  summarise(payoff = mean(payoff), .groups = "keep")
+```
+
+### Distribution of participants' performance:
+
+Below, we visualise participants performance, as measured by their average payoffs for each $m \in \{12, 16, 20\}$, separately for each visualised condition. We also plot the expected payoff, as computed above, resultant from following the normative strategies.
+
+```{r, fig.height = 4, fig.width = 12}
+legend = get_legend(
+  ggplot(data = performance.normative_payoff) +
+    geom_point(aes(x = payoff, y = method, colour = method), size = 4)  + 
+    scale_colour_benchmark() + 
+    theme(legend.box.margin = margin(0, 0, 0, 1))
+)
+
+plot_grid(
+  df.responses.payoff |> 
+    group_by(user_id, m, vis) |> 
+    summarise(payoff = mean(payoff), .groups = "keep") |> 
+    ggplot() +
+    geom_histogram(aes(payoff), binwidth = 50, boundary = 0) +
+    geom_vline(aes(xintercept = payoff, colour = method), data = performance.normative_payoff, linewidth = 1) +
+    facet_grid(m ~ vis) + 
+    scale_colour_benchmark() +
+    theme(legend.position="none"), 
+  legend,
+  rel_widths = c(11, 1),
+  nrow = 1
+)
+```
+
+From the figure above, we can see that:
+
+- Participants are not performing terribly, particularly in the conditions which provided them with some summary statistic and uncertainty information relevant to the task at hand (CIs or PDFs). They are likely able to use the information provided to them through the visual representation in some way while making the decision.
+- That said, while participants are likely making use of uncertainty information, only about half the participants in these conditions (CI and PDF) are able to get a positive payoff based on the incentives we provided them. This suggests that additional support may allow participants to improve on such decision making tasks.
+- When comparing to the expected payoff from the normative strategies, it seems that different participants (in the CI and PDF conditions) may be using different strategies. For instance, in the CI and PDF conditions, we see a few participants perform close to the expected payoff from using a BH strategy; we believe that these participants may likely be using some form of multiple comparisons corrections strategy. Additionally, and particularly in the CI condition, we observe certain peaks around the expected payout of the *no correction* and *mean only* strategies, suggesting that some participants may be employing such a strategy, even though it leads to sub-optimal decisions.
+
+
+### Comparing participants average tendencies to reject the null and their total number of false positives:
+
+In the plot below, we visualise the average number of rejected null hypothesis in a particular trial by participants i.e. how many plots they select / "mark as profitable", and compare that to the normative strategies of uncorrected, BH, mean only, and random. We see that, in the CI and PDF conditions:
+
+1. while participants select more plots as the number of possible comparisons increases, they are selecting fewer plots compared to an uncorrected strategy but more than a perfectly executed BH strategy.
+
+2. while participants total number of False Positives is increasing as the number of possible comparisons increases, they are making fewer False Positives when compared to an uncorrected strategy, but greater than a BH strategy would suggest.
+
+3. participants have a lower False Discovery Rate when compared to an uncorrected strategy, but greater than a BH strategy would suggest.
+
+4. participants have a higher payoff when compared to an uncorrected strategy, but lower than a BH strategy would suggest.
+
+```{r, descriptive-performance, fig.height = 4, fig.width = 16}
+p1 = performance.normative_strategies |> 
+  group_by(method, m) |> 
+  summarise(selected = mean(tp + fp), .groups = "drop") |> 
+  add_row(
+    df.responses.payoff |> 
+      group_by(m, vis) |> 
+      summarise(selected = mean(tp + fp), .groups = "drop") |> 
+      rename(method = vis)
+  ) |> 
+  mutate(
+    m = ordered(m, levels=c(12, 16, 20)),
+    method = factor(method, levels = c("BH", "no correction", "mean_only", "random", "baseline", "CI", "PDF"))
+  ) |> 
+  ggplot(aes(y = selected, x = m)) +
+  geom_line(aes(group = method, colour = method)) +
+  geom_point(aes(colour = method), size = 3) +
+  labs(y = "Average number of rejected null hypotheses\n(per trial)") +
+  scale_y_continuous(limits = c(0, 14), breaks = seq(0, 14, by = 2)) + 
+  scale_colour_data()
+
+legend.responses_strategies = get_legend(p1 +  theme(legend.box.margin = margin(0, 0, 0, 1)))
+
+p2 = performance.normative_strategies |> 
+  group_by(method, m) |> 
+  summarise(fp = mean(fp), .groups = "drop") |> 
+  add_row(
+    df.responses.payoff |> 
+      group_by(m, vis) |> 
+      summarise(fp = mean(fp), .groups = "drop") |> 
+      rename(method = vis)
+  ) |> 
+  mutate(
+    m = ordered(m, levels=c(12, 16, 20)),
+    method = factor(method, levels = c("BH", "no correction", "mean_only", "random", "baseline", "CI", "PDF"))
+  ) |> 
+  ggplot(aes(y = fp, x = m)) +
+  geom_line(aes(group = method, colour = method)) +
+  geom_point(aes(colour = method), size = 3) +
+  scale_y_continuous(limits = c(0, 14), breaks = seq(0, 14, by = 2)) +
+  labs(y = "Average number of False Positives\n(per trial)") + 
+  scale_colour_data() +
+  theme(legend.position="none")
+
+p3 = performance.normative_strategies |> 
+  mutate(fdr = ifelse(tp+fp, fp/(tp+fp), 0)) |> 
+  group_by(method, m) |> 
+  summarise(fdr = mean(fdr), .groups = "drop") |> 
+  add_row(
+    df.responses.payoff |> 
+      mutate(fdr = ifelse(tp+fp, fp/(tp+fp), 0), method = "user response") |> 
+      group_by(m, vis) |> 
+      summarise(fdr = mean(fdr), .groups = "drop") |> 
+      rename(method = vis)
+  ) |> 
+  mutate(
+    m = ordered(m, levels=c(12, 16, 20)),
+    method = factor(method, levels = c("BH", "no correction", "mean_only", "random", "baseline", "CI", "PDF"))
+  ) |> 
+  ggplot(aes(y = fdr, x = m)) +
+  geom_line(aes(group = method, colour = method)) +
+  geom_point(aes(colour = method), size = 3) + 
+  labs(y = "Average False Discovery Rate\n(per trial)") + 
+  scale_colour_data() +
+  theme(legend.position="none")
+
+p4 = performance.normative_payoff |> 
+  ungroup() |> 
+  add_row(
+    df.responses.payoff |> 
+      group_by(m, vis) |> 
+      summarise(payoff = median(payoff), .groups = "drop") |> 
+      rename(method = vis)
+  ) |> 
+  mutate(
+    m = ordered(m, levels=c(12, 16, 20)),
+    method = factor(method, levels = c("BH", "no correction", "mean_only", "random", "baseline", "CI", "PDF"))
+  ) |> 
+  ggplot(aes(y = payoff, x = m)) +
+  geom_line(aes(group = method, colour = method)) +
+  geom_point(aes(colour = method), size = 3) + 
+  labs(y = "Average Points Accumulated\n(per trial)") + 
+  scale_colour_data() +
+  theme(legend.position="none")
+
+plot_grid(p1 + theme(legend.position="none"), p2, p3, p4, legend.responses_strategies, rel_widths = c(4, 4, 4, 4, 1), nrow = 1)
+```
+
+### Effects of repeated trials
+
+Additionally, as participants in our study are repeating many trials, there may be potential learning or fatigue effects. We visualise participants payoff as the trials progress below:
+
+```{r, fig.height = 4, fig.width = 12}
+df.responses.payoff |> 
+  ggplot(aes(x = trial, y = payoff)) +
+  geom_line(aes(group = user_id), alpha = 0.1) +
+  geom_smooth(method = lm, formula = 'y ~ x') +
+  scale_x_continuous(limits = c(1, 10), breaks = seq(1, 10, by = 1)) +
+  facet_wrap(. ~ block)
+```
+
+We observe that there may potentially be some learning / fatigue effects but it is difficult to determine.
+
+## Modeling
+
+After completing our exploratory model, we are ready to implement our regression model. We first convert the data into the required format for the regression model. This means calculating the number of true positives, true negatives, false positives and false negatives for each trial.
+
+```{r, data-prep}
+df = df.responses.model |>
+  rename( trial_id = index ) |> 
+  mutate(
+    tp = ifelse(response == 1 & positive == 1, 1, 0),
+    tn = ifelse(response == 0 & positive == 0, 1, 0),
+    fp = ifelse(response == 1 & positive == 0, 1, 0),
+    fn = ifelse(response == 0 & positive == 1, 1, 0)
+  ) |> 
+  group_by(vis, user_id, m, block, trial_id) |> 
+  summarise_at(vars(tp, tn, fn, fp), sum) |> 
+  mutate(
+    block = factor(block),
+    nregions = factor(m),
+    adj_trial_id = trial_id/5 - 1.1
+  )
+
+df$y = df |> with(cbind(tp, tn, fn, fp)) 
+
+select(df, -y)
+```
+
+We then implement the regression model. We define weakly informative zero-centered priors for model parameters, and show the model summary results:
+
+```{r}
+prior_multinom = c(
+  prior(normal(0, 1.5), class = Intercept, dpar = "mufn"),
+  prior(normal(0, 1.5), class = Intercept, dpar = "mutn"),
+  prior(normal(0, 1.5), class = Intercept, dpar = "mufp"),
+  prior(normal(0, 0.5), class = b, dpar = "mufn"),
+  prior(normal(0, 0.5), class = b, dpar = "mutn"),
+  prior(normal(0, 0.5), class = b, dpar = "mufp"),
+  prior(lkj(2), class = cor),
+  prior(normal(0, 0.5), class = sd, dpar = "mufn"),
+  prior(normal(0, 0.5), class = sd, dpar = "mufp"),
+  prior(normal(0, 0.5), class = sd, dpar = "mutn")
+)
+
+fit = brm(
+  bf(y | trials(m) ~ vis * nregions * adj_trial_id * block + (nregions * adj_trial_id * block | user_id)),
+  data = df, 
+  family = multinomial(), 
+  prior = prior_multinom, 
+  backend = "cmdstanr",
+  cores = 4, 
+  chains = 4, 
+  iter = 10000, 
+  warmup = 5000,
+  refresh = 500,
+  thin = 5,
+  control = list(adapt_delta = 0.9, max_treedepth = 15),
+  file = "../data/model/final-fits-minimal.rds"
+)
+
+# fit # we hide the model coefficients from the HTML output because of length
+```
+
+
+## Model validation
+
+We use posterior retrodictive checks to verify whether our model is able to recover the actual data used to fit the model. For this, we first calculate what the model estimates each participants' response would be, for each trial (10), in each block (3), and m (3), given the visualisation condition that they were exposed to. In other words, here we calculate estimates for the group-level effects (i.e. every participant), and not just for the "typical" participant.
+
+```{r, include = FALSE, eval = FALSE}
+library(furrr)
+
+plan(multisession, workers = 4)
+options = furrr_options(seed = 32)
+
+draws.fit.raneffs = df |> 
+  select(-y) |> 
+  ungroup() |> 
+  data_grid(adj_trial_id, block, m, nesting(vis, user_id)) |> 
+  mutate(nregions = strtoi(m)) |> 
+  group_by(adj_trial_id, block, m) |> 
+  group_split() %>%
+  furrr::future_map_dfr(~ add_epred_draws(., fit, ndraws = 1000), 
+                        .options = options, .progress = TRUE)
+plan(sequential)
+
+draws.fit.raneffs |> 
+  saveRDS(file = "../data/model/05-draws_fit_raneffs.rds")
+```
+
+Note that due to size constraints, we do not share the RDS file calculated above in the Supplementary materials. However, this can be found in the OSF repository.
+Next, we calculate the average performance (tp, tn, fp, fn and fdr) for each `vis`, `m`, `block` and `trial` variable, averaged over participants:
+
+```{r, include = FALSE, eval = FALSE}
+draws.fit.raneffs.summary = readRDS(file = "../data/model/05-draws_fit_raneffs.rds") |> 
+  group_by(vis, m, adj_trial_id, block, .category, .draw) |> 
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(fdr = ifelse(tp+fp, fp / (fp + tp), 0)) |> 
+  group_by(vis, m, adj_trial_id, block, .draw) |> 
+  summarise_at(vars(tp, tn, fp, fn, fdr), mean) |> 
+  mutate(
+    vis = ifelse(vis == "data-only", "baseline", ifelse(vis == "ci-50", "CI", "PDF")),
+    vis = factor(vis, levels = c("PDF", "CI", "baseline"))
+  )
+
+saveRDS(draws.fit.raneffs.summary, file = "../data/model/06-draws_fit_raneffs-summary.rds")
+```
+
+We use the summarised results to perform our model validation.
+
+### Posterior retrodictives: participants average number and model estimated rates of TP/TN/FP/FN and FDR
+
+The following figure shows the participants' average TP, TN, FP, FN and FDR rates, in each `vis` and `m` conditions` in yellow. It also visualises the model's estimated average TP, TN, FP, FN and FDR rates using 95% confidence interval and the complementary cumulative distribution function. We also highlight the rates achieved by Benjamini-Hochberg (teal) and uncorrected (red) strategies.
+
+```{r posterior-retrodictives, fig.height = 6, fig.width = 12}
+draws.fit.raneffs.summary = readRDS("../data/model/06-draws_fit_raneffs-summary.rds")
+ 
+ntrials = 10
+performance.normative_strategies.summary = performance.normative_strategies |> 
+  mutate(fdr = ifelse(tp+fp, fp / (fp + tp), 0)) |> 
+  filter(method == "BH" | method == "no correction") |> 
+  group_by(method, m) |> 
+  summarise_at(vars(tp, tn, fp, fn, fdr), mean) |> 
+  mutate_at(vars(tp, tn, fp, fn), ~ ./m) |> 
+  mutate(m = factor(m)) |> 
+  pivot_longer(cols = c(tp:fdr), names_to = ".category", values_to = ".value")
+
+data.participant.summary = df.responses |> 
+  filter(trial != 0) |> 
+  mutate(
+    tp = ifelse(response == 1 & positive == 1, 1, 0),
+    tn = ifelse(response == 0 & positive == 0, 1, 0),
+    fp = ifelse(response == 1 & positive == 0, 1, 0),
+    fn = ifelse(response == 0 & positive == 1, 1, 0),
+    m = factor(m)
+  ) |>
+  group_by(m, vis, trial, user_id) |> 
+  summarise_at(vars(tp, tn, fp, fn), sum) |> 
+  mutate_at(vars(tp, tn, fp, fn), ~ . / strtoi(m)) |> 
+  mutate(fdr = ifelse(tp+fp, fp / (fp + tp), 0)) |> 
+  group_by(m, vis) |> 
+  summarise_at(vars(tp, tn, fp, fn, fdr), mean) |> 
+  pivot_longer(cols = c(tp:fdr), names_to = ".category", values_to = ".value")
+
+plot = draws.fit.raneffs.summary |> 
+  mutate_at(vars(tp, tn, fp, fn), ~ ./m) |> 
+  pivot_longer(cols = c(tp:fdr), names_to = ".category", values_to = ".epred") |> 
+  mutate(m = factor(m)) |> 
+  ggplot() +
+  stat_ccdfinterval(aes(x = .epred, y = vis), fill = "#EBEBEB", color = "#393D3F", .width = 0.95) +
+  geom_point(data = data.participant.summary, aes(x = .value, y = vis), size = 2, shape = 21, color = "#F5B700", fill = "#F5B700") +  #7371fc
+  geom_vline(data = performance.normative_strategies.summary, aes(xintercept = .value, colour = method)) +
+  geom_vline(xintercept = 0, colour = "#424b54") +
+  facet_grid(m ~ .category) +
+  labs(x = "percent of each type of correctness / errors", y = "type of correctness / error") +
+  coord_cartesian(xlim = c(0, 0.6), expand = TRUE, clip = "off") +
+  scale_colour_benchmark() +
+  scale_fill_densities() +
+  theme(
+    legend.position="none",
+    panel.spacing.y = unit(1, "cm"),
+    axis.title = element_blank()
+  )
+
+plot
+```
+
+## Results
+
+We again extract draws from a model. This time, we extract the number of TP/TN/FP/Fn for an average participant (i.e. no group level effects) in each `vis` condition, for each `m`, `trial` and `block`.
+
+```{r}
+datagrid_exp = df |> 
+  select(-y) |> 
+  ungroup() |> 
+  data_grid(vis, adj_trial_id, block, m)
+
+draws.fit = datagrid_exp |> 
+  mutate(nregions = as.factor(m)) |> # this will probably have to change to a factor
+  add_epred_draws(fit, ndraws = 1000, re_formula = NA) |> 
+  group_by(vis, block, m, .row, .category, .draw) |> # this will probably need to change after the new model
+  select(-nregions) |> # can get rid of this column as it is redundant
+  mutate( 
+    .epred = .epred / m,
+    m = factor(m),
+    vis = ifelse(vis == "data-only", "baseline", ifelse(vis == "ci-50", "CI", "PDF")),
+    vis = factor(vis, levels = c("PDF", "CI", "baseline"))
+  ) # because we are estimating at a trial level where m = {12, 16, 20}
+```
+
+
+### Model predicted rates of TP, TN, FP and FN
+
+Below we visualise the model predicted rates of true positives, true negatives, false positives and false negatives for each `vis` and `m`. First for m = 20:
+
+```{r prob-rates-m20, fig.height = 8, fig.width = 12}
+plot_rates = function(data, m, .category) {
+  data |> 
+    filter(m == m & .category == .category) |> 
+    mutate(trial = (adj_trial_id + 1.1) * 5) |> 
+    ggplot() +
+    stat_lineribbon(aes(x = trial, y = .epred)) +
+    scale_fill_brewer() + 
+    facet_grid(.category ~ vis) +
+    theme(
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.title = element_blank(),
+      legend.position = "none"
+    )
+}
+
+p1.20 = plot_rates(draws.fit, "20", "tp")
+p2.20 = plot_rates(draws.fit, "20", "tn")
+p3.20 = plot_rates(draws.fit, "20", "fp")
+p4.20 = plot_rates(draws.fit, "20", "fn")
+
+plot_grid(p1.20, p2.20, p3.20, p4.20, nrow = 1)
+```
+
+Next, for m = 16
+
+```{r prob-rates-m16, fig.height = 8, fig.width = 12}
+p1.16 = plot_rates(draws.fit, "16", "tp")
+p2.16 = plot_rates(draws.fit, "16", "tn")
+p3.16 = plot_rates(draws.fit, "16", "fp")
+p4.16 = plot_rates(draws.fit, "16", "fn")
+
+plot_grid(p1.16, p2.16, p3.16, p4.16, nrow = 1)
+```
+
+And then finally for m = 12
+
+```{r prob-rates-m12, fig.height = 8, fig.width = 12}
+p1.12 = plot_rates(draws.fit, "12", "tp")
+p2.12 = plot_rates(draws.fit, "12", "tn")
+p3.12 = plot_rates(draws.fit, "12", "fp")
+p4.12 = plot_rates(draws.fit, "12", "fn")
+
+plot_grid(p1.12, p2.12, p3.12, p4.12, nrow = 1)
+```
+
+
+
+The figures above show that, for the average participant:
+
+- they will have the highest probability of False Positives in the baseline condition, and lowest in the PDF condition (and the inverse relation for the number of True Negatives)
+- their number of False Positives decrease as they progress through the trials
+
+However, our goal is not to study the block and trial-level. Instead, since the main objective of this study is to understand how *an average participant* will typically behave, and we are not interested in learning or fatigue effects, and we will marginalise over the block and trials variable (See below for an explainer on marginalisation)
+
+
+### Understanding multiple comparisons
+
+To determine whether participants' are correcting for multiple comparisons we visualise the model estimates for:
+
+- the probability of a false positive per trial (pre-registered)
+- the false discovery rate (exploratory)
+- the number of hypotheses that are rejected on average i.e. how likely are they to indicate a region as profitable (exploratory)
+
+
+#### The average number of False Positives
+
+We report the estimated average probability of a False Positive in each condition, broken down by m in the paper:
+
+```{r}
+draws.fit |>
+  filter(.category == "fp") |> 
+  mutate(.epred = .epred) |> 
+  group_by(vis, m) |> 
+  mean_qi(.epred) |> 
+  mutate_at(vars(.epred, .lower, .upper), ~ round(., 2))
+```
+
+The following figure visualises the estimated posterior densities for the probability of an average participant in making a False Positive in a single trial. Since our goal is to identify whether participants aare performing any form of multiple comparisons correction, we visualise the difference from the uncorrected strategy:
+
+```{r, fig.height = 5, fig.width = 12}
+legend.densities = get_legend(
+  ggplot(filter(draws.fit, .category == "fp" & m == "12")) +
+    stat_slab(aes(x = .epred, y = m, fill = vis), alpha = 0.7) +
+    geom_point(aes(x = fp, y = m, colour = method), data = performance.normative_strategies.rates) +
+    scale_fill_densities() + 
+    scale_colour_benchmark() +
+    theme(legend.box.margin = margin(0, 0, 0, 1))
+)
+
+p.fp = draws.fit |>
+  filter(.category == "fp") |> 
+  ggplot() +
+  stat_slab(aes(x = .epred, y = m, fill = vis), alpha = 0.7) +
+  geom_point(aes(x = fp, y = m, colour = method), data = performance.normative_strategies.rates) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_fill_densities() +
+  scale_colour_benchmark() +
+  theme(legend.position = "none")
+
+performance.diff.fp = performance.normative_strategies.rates |> 
+  select(method, m, fp) |> 
+  pivot_wider(names_from = method, values_from = fp) |> 
+  mutate(diff = BH - `no correction`, method = "BH - uncorrection")
+
+p.fp.diff = draws.fit |>
+  filter(.category == "fp") |>
+  inner_join(
+    y = performance.normative_strategies.rates |>
+      filter(method == "no correction") |>
+      select(method, m, fp),
+    by = "m"
+  ) |>
+  mutate(.epred = .epred - fp) |>
+  ggplot() +
+  stat_slab(aes(x = .epred, y = m, fill = vis), alpha = 0.7) +
+  geom_point(aes(x = diff, y = m, colour = method), data = performance.diff.fp) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_fill_densities() +
+  scale_colour_benchmark() +
+  theme(legend.position = "none")
+
+# pdf(file = "../figures/figures-rendered/02-fp_rates.pdf", useDingbats = FALSE, width = 8, height = 4)
+plot_grid(p.fp, p.fp.diff, legend.densities, rel_widths = c(4, 4, 1), nrow = 1)
+```
+
+
+#### False Discovery Rates
+
+Next, we calculate the False Discovery Rates for each of the benchmarks identified:
+
+
+```{r, fig.height = 4, fig.width = 12}
+normative_fdr = performance.normative_strategies.rates |> 
+  mutate(fdr = ifelse(fp + tp, fp/(fp + tp), 0)) |>  
+  group_by(method, m) |> 
+  summarise(fdr = round(mean(fdr), 2), .groups = "keep")
+
+normative_fdr
+```
+
+We then compare the False Discovery Rates in each condition with that of the benchmarks:
+
+```{r, fig.height = 4, fig.width = 12}
+draws.fit |>
+  group_by(m, vis, .draw) |> 
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(fdr = ifelse((fp + tp), fp / (fp + tp), 0)) |> 
+  summarise(fdr = mean(fdr), .groups = "drop") |> 
+  ggplot() +
+  stat_slab(aes(x = fdr, y = m, fill = vis), alpha = 0.7) +
+  geom_point(aes(x = fdr, y = m, colour = method), data = normative_fdr) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_colour_benchmark() +
+  scale_fill_densities()
+```
+
+
+#### How many null hypotheses are rejected on average
+
+Any form of multiple comparisons corrections strategy involve, when performing multiple comparisons, employing a stricter criterion for rejecting null hypothesis. In other words, in our study, we would see participants rejecting fewer null hypotheses per trial than an uncorrected strategy. We compare the number of rejections below:
+
+```{r, fig.height = 4, fig.width = 12}
+draws.fit.rejections = draws.fit |>
+  group_by(m, vis, .draw, .category) |> 
+  summarise(.epred = mean(.epred), .groups = "drop_last") |> 
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(n_rejections = (tp + fp) * strtoi(m))
+
+performance.normative_strategies.rejections = performance.normative_strategies.rates |> 
+  mutate(n_rejections = (tp + fp) * strtoi(m))
+
+draws.fit.rejections |>
+  ggplot(aes(x = n_rejections, y = m)) +
+  stat_slab(aes(fill = vis), alpha = 0.7) +
+  geom_point(aes(colour = method), data = performance.normative_strategies.rejections) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_colour_benchmark() +
+  scale_fill_densities()
+```
+
+
+
+### Impact of uncertainty visualisation
+
+Next we explore our second R!, which concerns the impact of uncertainty visualisation. For this, we marginalise over the values of `m`.
+
+#### By Probability of a False Positive
+
+We first calculate the probability of a false positive:
+
+```{r}
+draws.fit |>
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  group_by(vis) |> 
+  mean_qi(fp)  |> 
+  mutate_at(vars(fp, .lower, .upper), ~ round(., 2))
+```
+
+and the difference in FDR, from the baseline condition:
+
+```{r}
+draws.fit |>
+  filter(.category == "fp") |> 
+  group_by(vis, .draw) |> 
+  summarise(.epred = mean(.epred), .groups = "drop") |> 
+  compare_levels(.epred, by = vis, comparison = list(c("CI", "baseline"), c("PDF", "baseline"))) |> 
+  mean_qi(.epred) |> 
+  mutate_at(vars(.epred, .lower, .upper), ~ round(., 2))
+```
+
+```{r fp-vis, fig.height = 4, fig.width = 12}
+performance.normative_summary = performance.normative_strategies |> 
+  group_by(method) |> 
+  mutate(fdr = ifelse(tp + fp, fp / (fp + tp), 0)) |> 
+  mutate_at(vars(tp, tn, fp, fn), ~ ./m) |> 
+  summarise_at(vars(tp, tn, fp, fn, fdr), mean)
+
+p1.fp_vis = draws.fit |>
+  filter(.category == "fp") |> 
+  group_by(vis, .draw) |> 
+  summarise(.epred = mean(.epred), .groups = "drop") |> 
+  ggplot() +
+  stat_slab(aes(x = .epred, y = vis, fill = vis), alpha = 0.7) +
+  geom_vline(aes(xintercept = fp, colour = method), data = performance.normative_summary) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_colour_benchmark() +
+  scale_fill_densities() +
+  theme(legend.position = "none")
+
+p2.fp_vis = draws.fit |>
+  filter(.category == "fp") |> 
+  group_by(vis, .draw) |> 
+  summarise(.epred = mean(.epred), .groups = "drop") |> 
+  compare_levels(.epred, by = vis, comparison = list(c("CI", "baseline"), c("PDF", "baseline"))) |> 
+  ungroup() |> 
+  add_row(vis = "baseline", .epred = 0, .draw = 1) |> 
+  mutate(vis = factor(vis, levels = c("PDF - baseline", "CI - baseline", "baseline"))) |> 
+  ggplot() +
+  stat_slab(aes(x = .epred, y = vis, fill = vis), alpha = 0.7) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_x_continuous(limits = c(-0.3, 0.1)) +
+  scale_colour_benchmark() +
+  scale_fill_densities() +
+  theme(legend.position = "none")
+
+plot_grid(p1.fp_vis, p2.fp_vis, legend.densities, rel_widths = c(4, 4, 1), nrow = 1)
+```
+
+
+```{r, include = FALSE, eval = FALSE}
+rbind(
+  draws.fit |>
+    filter(.category == "fp") |> 
+    group_by(vis, .draw) |> 
+    summarise(.epred = mean(.epred), .groups = "drop") |> 
+    mutate(.type = "regular"),
+  draws.fit |>
+    filter(.category == "fp") |> 
+    group_by(vis, .draw) |> 
+    summarise(.epred = mean(.epred), .groups = "drop") |> 
+    compare_levels(.epred, by = vis, comparison = list(c("CI", "baseline"), c("PDF", "baseline"))) |> 
+    ungroup() |> 
+    add_row(vis = "baseline", .epred = 0, .draw = 1) |> 
+    mutate(.type = "difference")
+) |> 
+  mutate(.type = factor(.type, levels = c("regular", "difference"))) |> 
+  ggplot() +
+  stat_slab(aes(x = .epred, y = vis, fill = vis), alpha = 0.7, scale = 1.5) +
+  geom_vline(aes(xintercept = fp, colour = method), data = performance.normative_summary) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  facet_grid(.type ~ ., scales = "free") + 
+  theme(legend.position = "none")
+```
+
+#### By False Discovry Rate
+
+We perform the same comparisons for the false discovery rate:
+
+```{r fdr-vis, fig.height = 4, fig.width = 12}
+performance.normative_fdr = performance.normative_strategies |> 
+  group_by(method) |> 
+  mutate(fdr = ifelse(tp + fp, fp / (fp + tp), 0)) |> 
+  summarise_at(vars(tp, tn, fp, fn, fdr), mean)
+
+p1.fdr_vis = draws.fit |>
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(fdr = ifelse((fp + tp), fp / (fp + tp), 0)) |> 
+  group_by(vis, .draw) |> 
+  summarise(fdr = mean(fdr), .groups = "drop") |> 
+  ggplot() +
+  stat_slab(aes(x = fdr, y = vis, fill = vis), alpha = 0.7) +
+  geom_vline(aes(xintercept = fdr, colour = method), data = performance.normative_fdr) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  geom_vline(xintercept = 0.25, linewidth = 1) +
+  scale_x_continuous(breaks = seq(-0.4, 0.8, by = 0.2)) +
+  scale_colour_benchmark() +
+  scale_fill_densities() +
+  theme(legend.position = "none")
+
+p2.fdr_vis = draws.fit |>
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(fdr = ifelse((fp + tp), fp / (fp + tp), 0)) |> 
+  group_by(vis, .draw) |> 
+  summarise(fdr = mean(fdr), .groups = "drop") |> 
+  compare_levels(fdr, by = vis, comparison = list(c("CI", "baseline"), c("PDF", "baseline"))) |> 
+  ungroup() |> 
+  add_row(vis = "baseline", fdr = 0, .draw = 1) |> 
+  mutate(vis = factor(vis, levels = c("PDF - baseline", "CI - baseline", "baseline"))) |> 
+  ggplot() +
+  stat_slab(aes(x = fdr, y = vis, fill = vis), alpha = 0.7, scale = 1.2) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_x_continuous(breaks = seq(-0.4, 0.8, by = 0.2)) +
+  scale_colour_benchmark() +
+  scale_fill_densities() +
+  theme(legend.position = "none")
+
+plot_grid(p1.fdr_vis, p2.fdr_vis, legend.densities, rel_widths = c(4, 4, 1), nrow = 1)
+```
+
+#### By Payout
+
+And finally, we perform the same set of comparisons for the `points` metric
+
+```{r points-vis, fig.height = 4, fig.width = 12}
+performance.normative_pay = performance.normative_strategies |> 
+  group_by(method) |> 
+  mutate(payoff = tp*50 + tn*10 + fp*-150 + fn*-40) |> 
+  summarise(payoff = mean(payoff)) |> 
+  filter(method == "BH" | method == "no correction")
+
+p1.points_vis = draws.fit |>
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(payoff = (tp*50 + tn*10 + fp*-150 + fn*-40)*strtoi(m)) |> 
+  group_by(vis, .draw) |> 
+  summarise(payoff = mean(payoff), .groups = "drop") |> 
+  ggplot() +
+  stat_slab(aes(x = payoff, y = vis, fill = vis), alpha = 0.7) +
+  geom_vline(aes(xintercept = payoff, colour = method), data = performance.normative_pay) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_x_continuous(breaks = seq(-600, 600, by = 200)) +
+  scale_colour_benchmark() +
+  scale_fill_densities() +
+  theme(legend.position = "none")
+
+p2.points_vis = draws.fit |>
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(payoff = (tp*50 + tn*10 + fp*-150 + fn*-40)*strtoi(m)) |> 
+  group_by(vis, .draw) |> 
+  summarise(payoff = mean(payoff), .groups = "drop") |> 
+  compare_levels(payoff, by = vis, comparison = list(c("CI", "baseline"), c("PDF", "baseline"))) |> 
+  ungroup() |> 
+  add_row(vis = "baseline", payoff = 0, .draw = 1) |> 
+  mutate(vis = factor(vis, levels = c("PDF - baseline", "CI - baseline", "baseline"))) |> 
+  ggplot() +
+  stat_slab(aes(x = payoff, y = vis, fill = vis), alpha = 0.7) +
+  geom_vline(xintercept = 0, linewidth = 1) +
+  scale_x_continuous(breaks = seq(-600, 600, by = 200)) +
+  scale_colour_benchmark() +
+  scale_fill_densities() +
+  theme(legend.position = "none")
+
+plot_grid(p1.points_vis, p2.points_vis, legend.densities, rel_widths = c(4, 4, 1), nrow = 1)
+```
+
+
+
+### Variability in participants responses
+
+We compare the distribution in participants average accumulated points in a trial, with the posterior estimated number of points. This highlights the variability in participants responses (this is Fig 7 in the paper):
+
+```{r payout-variability, fig.height = 6, fig.width = 12}
+normative_payoff = performance.normative_strategies |> 
+  mutate( payoff = tp*50 + tn*10 + fp*-150 + fn*-40 ) |> 
+  group_by(method) |> 
+  summarise(payoff = mean(payoff), .groups = "keep")
+
+df.pay.summary = df.responses.payoff |> 
+  group_by(user_id, vis) |> 
+  summarise(payoff = mean(payoff), .groups = "keep")
+
+draws.fit |>
+  group_by(m, .draw) |> 
+  pivot_wider(names_from = .category, values_from = .epred) |> 
+  mutate(payoff = (tp*50 + tn*10 + fp*-150 + fn*-40)*strtoi(m)) |> 
+  ggplot() +
+  geom_histogram(aes(payoff, after_stat(count/60)), data = df.pay.summary, binwidth = 50, boundary = 0) +
+  stat_slabinterval(aes(x = payoff, fill = vis, side = "left"), scale = 0.05, .width = 0.95) +
+  geom_vline(aes(xintercept = payoff, colour = method), data = normative_payoff, linewidth = 1) +
+  scale_y_continuous(breaks = seq(-1, 0.3, by = 0.1)) +
+  scale_x_continuous(breaks = seq(-1200, 400, by = 200)) +
+  coord_cartesian(ylim = c(-0.1, 0.2)) +
+  facet_grid(. ~ vis) +
+  scale_colour_benchmark() +
+  scale_fill_densities() + 
+  theme(
+    legend.position="none",
+    panel.spacing.y = unit(1, "cm"),
+    axis.title = element_blank()
+  )
+
+# pdf(file = "../figures/figures-rendered/02-mean-pay.pdf", useDingbats = FALSE, width = 12, height = 6)
+```
+
+## Marginalisation explanation
+
+We present marginalised results in our paper. Below is an explainer on what is marginalisation and how it is performed (appendix A):
+
+```{r marginalisation, fig.height = 3, fig.width = 12}
+draws.ci.fp = draws.fit |> 
+  filter(.category == "fp" & m == "12" & vis == "CI") |> 
+  mutate(trial = (adj_trial_id + 1.1)*5) |> 
+  group_by(vis, m, trial, .category, .draw) |> 
+  summarise(.epred = mean(.epred), .groups = "keep")
+
+draws.ci.fp.sample = draws.ci.fp |> 
+  group_by(.draw) |> 
+  summarise(trial = list(trial), .epred = list(.epred), .groups = "drop") |> 
+  sample_n(500) |> 
+  unnest(cols = c(trial, .epred))
+
+p1.marginalisation = draws.ci.fp |> 
+  ungroup() |> 
+  ggplot() +
+  stat_lineribbon(aes(x = trial, y = .epred)) +
+  scale_fill_brewer() + 
+  ylim(c(0, 0.3)) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  )
+
+p2.marginalisation = draws.ci.fp.sample |> 
+  ggplot() +
+  geom_line(aes(x = trial, y = .epred, group = .draw), alpha = 0.1, color = "#5B75BD") + #"#6ECCB0"
+  coord_cartesian(ylim = c(0, 0.3)) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title = element_blank()
+  )
+
+p3.marginalisation = draws.ci.fp.sample |> 
+  group_by(.draw) |> 
+  summarise(.epred = mean(.epred), .groups = "drop")  |> 
+  ggplot() +
+  geom_dotplot(aes(x = .epred), binwidth = 0.002, stackratio = 1.4, fill = "#3182bd", color = NA) + 
+  xlim(c(0, 0.3)) +
+  coord_flip() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.title = element_blank(),
+    axis.text.x = element_blank()
+  )
+
+p4.marginalisation = draws.ci.fp |> 
+  group_by(.draw) |> 
+  summarise(.epred = mean(.epred), .groups = "drop") |> 
+  ggplot() +
+  stat_halfeye(aes(x = .epred, y = NA), .width = 0.95) +
+  xlim(c(0, 0.3)) +
+  coord_flip() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.title = element_blank(),
+    axis.text.x = element_blank()
+  )
+
+plot_grid(p1.marginalisation, p2.marginalisation, p3.marginalisation, p4.marginalisation, nrow = 1)
+```

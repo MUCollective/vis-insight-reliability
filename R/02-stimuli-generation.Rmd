@@ -1,0 +1,1209 @@
+---
+title: "Exploration of variance in low-probability binomial events"
+author: "Abhraneel Sarma"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggdist)
+library(distributional)
+library(cowplot)
+library(ggbeeswarm)
+library(wesanderson)
+
+# set up the global theme
+theme_set(theme_minimal())
+
+# redefine the default color scheme
+ggplot = function(...) ggplot2::ggplot(...) + scale_color_manual(values = wes_palette("AsteroidCity1"))
+```
+
+
+## Some preliminaries
+
+Here, I define some variables to help create nicer looking legends for the subsequent plots:
+
+```{r}
+template = tibble(
+  m = sample(c(12, 16, 20), 10, replace = TRUE),
+  method = sample(c("BH", "bonferroni", "uncorrected", "reject_none"), 10, replace = TRUE),
+  FDR = runif(10)
+) |> 
+  mutate(method = factor(method, levels = c("bonferroni", "BH", "uncorrected", "reject_none")))
+
+# some nicer looking legends
+legend = get_legend(
+  ggplot(template, aes(x = m, y = FDR, colour = method)) + geom_point() +
+    guides(color = guide_legend(override.aes = list(size = 3)))
+)
+```
+
+
+## Introduction
+In the document `01-experiment-design.Rmd`, we outlined why an incentive structure with the following rewards/penalties makes sense:
+
+- TP = +5: a successful discovery
+- TN = +1: identifying what does not work, beneficial but often not as much as a TP
+- FN = -4: the potential for missing out on an important discovery
+- FP = -15: many costs may be associated with false claiming a discovery
+
+```{r fig.height = 3, fig.width = 10}
+data.sim.effect_size_varying.outcomes = readRDS("../data/simulations/data.sim.varying_outcomes.rds") |> 
+  mutate(method = factor(method, levels = c("bonferroni", "BH", "uncorrected", "reject_none")))
+
+(data.sim.effect_size_varying.outcomes |> 
+  mutate( payoff = (5*(TP-3*FP) + 1*TN + -4*FN) ) |> 
+  ggplot(aes(x = effect_size, y = payoff, colour = method)) +
+  stat_pointinterval(point_interval = "mean_qi", .width = 0.8, position = position_dodge(width = 0.05)) +
+  facet_grid(. ~ p0, scales = "free_y")  +
+  labs(x = "effect size (standardised)") +
+  scale_x_continuous(breaks = seq(0.1, 0.5, by = 0.1)) +
+  scale_y_continuous(breaks = seq(-100, 50, by = 20)) +
+  theme(panel.spacing = unit(5, "mm"), legend.position = "none")) |> 
+  plot_grid(legend, rel_widths = c(10, 1))
+```
+
+Above, we see that the average difference between the BH and uncorrected strategies is approximately 25 payoff units. When selecting the stimuli, we can use rejection sampling to ensure that the stimuli we select has at least the same amount of difference. We will then randomly sample the required number of trials out of the sample which fits this criteria.
+
+## Experiment Stimuli
+
+Based on the explorations, we anticipate that $\pi_0 = 0.7$ and $\delta = 0.4$ would likely allow us to detect differences between the use of a multiple comparisons strategy as opposed to an uncorrected strategy. In addition, we also know that the differences in False Discovery Rates become more easily distinguishable for $m \geq 20$. However, based on our experimental setup, it is challenging to ask participants to view over 20 graphs at the same time. As a result, we focus on $m \in \{12, 16, 20\}$.
+
+### The distribution of p-value
+
+To sample p-values directly, we need to know the distribution of the p-value. *When the null is true*, the distribution of the p-value is uniform if the null is true. *When the alternative hypothesis is true*: Given by [@Hung et al.](https://www.jstor.org/stable/pdf/2533093.pdf) The following functions allow us to simulate p-values when the alternative hypothesis is true; the function `rp` allows us to draw random samples under the assumption that the alternative hypothesis is true.
+
+```{r}
+# PDF 
+f_p <- function(x, mu, sigma, K) {
+  dnorm(qnorm(1 - x) - sqrt(K) * mu / sigma) / dnorm(qnorm(1 - x))
+}
+# CDF
+F_p <- function(x, mu, sigma, K) {
+  1 - pnorm(qnorm(1 - x) - sqrt(K) * mu/sigma)
+}
+# inverse CDF of p-value
+F_p_inv <- function(q, mu, sigma, K, l = 0, u = 1){
+  uniroot(function(p) F_p(p, mu, sigma, K) - q, lower = l, upper = u)$root
+}
+# random sample from PDF of p-value using its invCDF
+rp <- function(mu, sigma, K){
+  q <- runif(1)
+  F_p_inv(q, mu, sigma, K)
+}
+```
+
+### Simulating p-values
+
+We then define a function to simulate unique p-values given a seed, number of comparisons (m), mean (mu) and standard deviation (sd), probability of the null being true (p_null), alpha, and number of trials (ntrials)
+
+```{r}
+simulate_pval = function(.seed, m, mu, sd, p_null, alpha, ntrials) {
+  set.seed(.seed)
+  
+  crossing(p0 = p_null, alpha, trial = 1:ntrials) |>
+    mutate(
+      `mu > 0` = map(p0, ~ sample(c(rep(0, round(.x * m)), rep(1, round((1 - .x) * m))), m))
+    ) |>
+    unnest(c(`mu > 0`)) |>
+    mutate(p_uncorrected = map_dbl(`mu > 0`, ~ ifelse(.x == 0, runif(1, 0, 1), rp(mu, sd, m))))
+}
+```
+
+Below, we show the result of a simulation for one trial, with the following parameters: $m = 10$, $Pr(H_0) = 0.7$, $\alpha = 0.25$. We use $\mu = 4$ and $\sigma = 10$ for underlying data generating process resulting in an effect size, $\delta = 0.4$, which corresponds to a medium effect size according to Cohen.
+
+```{r}
+simulate_pval(42, 10, 4, 10, 0.7, 0.25, 1)
+```
+
+Below, we simulate p-values using different seeds (1:10,000), for the parameters specified below:
+
+- $m \in \{12, 16, 20\}$
+- $Pr(H_0) = 0.7$
+- $\alpha = 0.25$
+- $\mu = 4$ and $\sigma = 10$ for underlying data generating process resulting in an effect size, $\delta = 0.4$. 
+
+We then calculate the corrected p-value using two correction strategies (*Bonferroni* and *Benjamini-Hochberg*). We also include a *reject none* strategy, which is a naive strategy that does not make use of the information presented to participants. We calculate the number of True Positives, True Negatives, False Positives and False Negatives using each of these strategies.
+
+```{r, eval = FALSE}
+mu = 4
+sd = 10
+m = c(12, 16, 20)
+ntrials = 10
+p_null = 0.7
+alpha = 0.25
+
+df.seed.stimuli = crossing(m = m, .seed = 1:1e4) |>
+  mutate(.sim = map2(.seed, m, simulate_pval, mu, sd, p_null, alpha, ntrials)) |>
+  unnest(.sim) |>
+  group_by(.seed, m, trial)
+
+df.seed.stimuli.stats = df.seed.stimuli |>
+  mutate( 
+    p_BH = p.adjust(p_uncorrected, "BH"), 
+    p_bonferroni = p.adjust(p_uncorrected, "bonferroni"),
+    p_reject_none = 1
+  ) |> 
+  pivot_longer(cols = starts_with("p_"), names_prefix = "p_", names_to = "method", values_to = "p_val") |>
+  group_by(.seed, method, m, trial) |>
+  mutate(
+    method = ifelse(method == "uncorrected", "no correction", method),
+    reject_null = p_val < alpha,
+    TP = as.integer(`mu > 0` & reject_null), # correctness of the decision
+    FP = as.integer(!`mu > 0` & reject_null),
+    TN = as.integer(!`mu > 0` & !reject_null),
+    FN = as.integer(`mu > 0` & !reject_null)
+  ) |>
+  summarise_at(.vars = vars(TP, FP, TN, FN), sum)
+
+saveRDS(df.seed.stimuli.stats, "../data/simulations/data-stimuli.rds")
+```
+
+Because the above simulation can take a long time to run, we store it and load it instead:
+
+```{r}
+df.seed.stimuli.stats = readRDS("../data/simulations/data-stimuli.rds")
+```
+
+Next, we calculate the average difference between Benjamini-Hochberg and the two baseline strategies: *BH* and *uncorrected*, and *BH* and *reject none*
+
+```{r}
+df.seed.stimuli.stats |>
+  mutate( payoff = (TP - 3*FP)*5 + (TN - 4*FN) ) |>
+  group_by(method, m) |> 
+  select(-c(TP:FN)) |> 
+  pivot_wider(names_from = "method", values_from = "payoff") |> 
+  mutate(
+    diff_BH_uncorrected = BH - `no correction`,
+    diff_BH_none = BH - reject_none
+  ) |> 
+  summarise_at(vars(diff_BH_uncorrected, diff_BH_none), median) 
+```
+
+We see that the average difference between the *BH* and *uncorrected* is approximately 7 if m = 12, 16 if m = 16, and 23 if m = 20. The average difference between the *BH* and *reject none* strategies is usually less than the difference between the *BH* and *uncorrected* strategies. We visualise these differences below:
+
+```{r}
+df.seed.stimuli.stats |>
+  mutate( payoff = (TP - 3*FP)*5 + (TN - 4*FN) ) |>
+  group_by(method, m) |> 
+  select(-c(TP:FN)) |> 
+  pivot_wider(names_from = "method", values_from = "payoff") |> 
+  mutate(
+    `diff BH and uncorrected` = BH - `no correction`,
+    `diff BH and none` = BH - reject_none
+  ) |> 
+  select(-c(BH:reject_none)) |> 
+  pivot_longer(cols = starts_with("diff"), names_prefix = "diff", names_to = "difference between") |> 
+  group_by(m, `difference between`) |> 
+  ggplot(aes(x = factor(m), y = value, colour = `difference between`)) +
+  stat_pointinterval(point_interval = "mean_qi", .width = 0.8, position = position_dodge(width = 0.2)) +
+  labs(x = "m (number of comparisons)", y = "Difference in payoff\nbetween the two strategies") +
+  scale_y_continuous(breaks = seq(-100, 50, by = 20))
+```
+
+Because we are testing a small set of trials, it is possible, due to sampling variability, that in a particular block of trials the difference between BH and uncorrected strategy is to small to be detected in our experiment. For instance, in the plot below, say we get a few pathological trials where using a BH strategy results in a payoff which lies in the lower tail of the distribution, whereas using an uncorrected strategy results in the upper tail of the distribution.
+
+```{r}
+df.seed.stimuli.stats |>
+  mutate( payoff = (TP - 3*FP)*5 + (TN - 4*FN) ) |>
+  group_by(method, m) |> 
+  select(-c(TP:FN)) |> 
+  group_by(m, method) |> 
+  ggplot(aes(x = factor(m), y = payoff, colour = method)) +
+  stat_pointinterval(point_interval = "mean_qi", .width = 0.8, position = position_dodge(width = 0.2)) +
+  labs(x = "m (number of comparisons)", y = "Payoff") +
+  scale_y_continuous(breaks = seq(-100, 50, by = 20))
+```
+
+Thus, to select the stimuli, we will use rejection sampling to ensure the following to criteria:
+- the difference between the BH strategy and uncorrected strategy for a particular trial is greater than average mean difference between the two trials.
+
+Imposing this criteria ensures that we choose stimuli where the median difference between using the two strategies of 9 (when m = 12), 14 (when m = 16) and 18 (when m = 20) is preserved.
+
+Next, we sample stimuli which satisfy the criterion described above. We first create a function which will sample from the large simulated space of p-values, and return 1 for each value of m, based on a specific seed. This is to ensure that we can retrieve the exact same set of values in the future.
+
+```{r}
+get_seeds = function(df, limits, .seed, keep_data) {
+  set.seed(.seed)
+
+  .sampled_seeds = df |> 
+    select(-c(TP:FN)) |> 
+    pivot_wider(names_from = "method", values_from = "payoff") |> 
+    mutate( diff_uncorrected = BH - `no correction`, diff_none = BH - reject_none ) |> 
+    
+    # the following block of code specifies: the payoff for each trial: payoff(BH) >= payoff(uncorrected)
+    filter( diff_uncorrected >= 0 ) |> 
+    group_by(.seed, m) |> 
+    mutate(count = n()) |> 
+    filter(count == 10) |> 
+    
+    # the following block of code specifies: 
+    # E(payoff|BH, m) > E(payoff|uncorrected, m) + mean_diff(BH, uncorrected) & E(payoff|BH, m) > E(payoff|reject_none, m) + mean_diff(BH, reject_none)
+    summarise_at(vars(diff_uncorrected, diff_none), mean) |> 
+    filter( 
+      (m == 12 & diff_uncorrected > limits[1] & diff_none > limits[2]) | 
+      (m == 16 & diff_uncorrected > limits[3] & diff_none > limits[4]) | 
+      (m == 20 & diff_uncorrected > limits[5] & diff_none > limits[6])
+    ) |> 
+    group_by(m, .seed) |> 
+    nest() |> 
+    group_by(m) |> 
+    sample_n(1) |> 
+    select(-data)
+  
+  if (keep_data) {
+    .sampled_seeds |> 
+      left_join(df, by = join_by(.seed, m))
+  } else {
+    .sampled_seeds
+  }
+}
+
+df.seed123.stimuli = df.seed.stimuli.stats |> 
+  mutate( payoff = ((TP - 3*FP)*4 + (TN - 4*FN)) ) |>
+  get_seeds(c(9, 9, 14, 14, 19, 19), 123, TRUE) |>
+  mutate(
+    method = fct_relevel(method, c("bonferroni", "BH", "no correction", "reject_none")),
+    payoff = ((TP - 3*FP)*5 + (TN - 4*FN))
+  )
+```
+
+Next, we visualise what the set of sampled stimuli for our experiment looks like, and whether it satisfies our criteria. Note: due to an error, while we used a payoff multiplier of 4 for reported reported positives (line 262) to calculate the seeds, we showed participants a multiplier of 5 (i.e. we use `payoff = ((TP - 3*FP)*5 + (TN - 4*FN))`) in our pilot. We decided to persist with this (multiplier of 5) for our main study as it does not change the decisions participants will have to make in any way; the only discernible effect is that the differences in payoff between strategies become somewhat larger.
+
+```{r, fig.width = 12, fig.height = 4}
+p1 = df.seed123.stimuli |>
+  mutate( payoff = ((TP - 3*FP)*4 + (TN - 4*FN)) ) |> 
+  ggplot() +
+  stat_pointinterval(aes(x = method, y = payoff, colour = method), .width = 0.95) +
+  geom_point(aes(x = method, y = payoff, colour = method), alpha = 0.5) +
+  geom_line(aes(x = method, y = payoff, group = trial), colour = "#666666", alpha = 0.5) +
+  facet_grid(. ~ m) +
+  scale_y_continuous(limits = c(-120, 40), breaks = seq(-120, 40, by = 20)) +
+  ggtitle("using multiplier of 4 for reported positives") +
+  theme(
+    axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1),
+    panel.spacing = unit(2, "lines"),
+    legend.position = "none"
+  )
+
+p2 = df.seed123.stimuli |> 
+  ggplot() +
+  stat_pointinterval(aes(x = method, y = payoff, colour = method), .width = 0.95) +
+  geom_point(aes(x = method, y = payoff, colour = method), alpha = 0.5) +
+  geom_line(aes(x = method, y = payoff, group = trial), colour = "#666666", alpha = 0.5) +
+  facet_grid(. ~ m) +
+  scale_y_continuous(limits = c(-120, 40), breaks = seq(-120, 40, by = 20)) +
+  ggtitle("using multiplier of 5 for reported positives") +
+  theme(
+    axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1),
+    panel.spacing = unit(2, "lines"),
+    legend.position = "none"
+  )
+
+plot_grid(p1, p2, legend, nrow = 1, rel_widths = c(5, 5, 1))
+```
+
+In the following figure, we show the differences in payoff if adopting the other strategies, from the payoff from a Benjamini-Hochberg strategy:
+
+```{r}
+df.seed123.stimuli |>
+  mutate(method = fct_relevel(method, c("bonferroni", "BH", "no correction", "reject_none"))) |> 
+  select(-c(TP:FN)) |> 
+  pivot_wider(names_from = method, values_from = payoff) |> 
+  mutate(
+    bonferroni = bonferroni - BH,
+    `no correction` = `no correction` - BH,
+    `reject none` = reject_none - BH,
+    BH = BH - BH
+  ) |> 
+  pivot_longer(cols = c("bonferroni", "BH", "no correction", "reject none"), names_to = "method", values_to = "payoff") |> 
+  ggplot() +
+  stat_pointinterval(aes(x = method, y = payoff, colour = method), .width = 0.95) +
+  geom_point(aes(x = method, y = payoff, colour = method), alpha = 0.5) +
+  geom_line(aes(x = method, y = payoff, group = trial), colour = "#666666", alpha = 0.5) +
+  facet_grid(. ~ m) +
+  theme(
+    axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1),
+    panel.spacing = unit(2, "lines")
+  )
+```
+
+Next, we can also estimate expected False Discovery Rates:
+
+```{r}
+df.seed123.stimuli |>
+  mutate( FDR = ifelse(TP + FP, FP/TP+FP, 0) ) |> 
+  ggplot() +
+  stat_pointinterval(aes(x = method, y = FDR, colour = method), .width = 0.95) +
+  geom_point(aes(x = method, y = FDR, colour = method), alpha = 0.5) +
+  geom_line(aes(x = method, y = FDR, group = trial), colour = "#666666", alpha = 0.5) +
+  facet_grid(. ~ m) +
+  theme(
+    axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1),
+    panel.spacing = unit(2, "lines")
+  )
+```
+
+## Generating data for pilot study
+
+```{r}
+generate_data = function(target, greater, N, mean, sd) {
+  mu = greater * mean
+  x = rnorm(N, mu, sd)
+  df = N - 1
+  
+  return( x + (qt(1 - target, df) * sd(x) / sqrt(N) - mean(x)) )
+}
+```
+
+Now that we have a set of seeds, we will need to generate data based on the p-values. We defined a function which generates data based on the target p-value, mean and sd. We use this `generate_data` function to generate a set of points to visualise: 
+
+```{r, eval = FALSE}
+pilot.exp.stimuli = df.seed123.stimuli |> 
+  select(.seed, m) |> 
+  filter(row_number() == 1) |> 
+  ungroup() |> 
+  mutate(.sim = map2(.seed, m, simulate_pval, mu, sd, p_null, alpha, ntrials)) |>
+  unnest(.sim) |>
+  mutate(p_uncorrected = ifelse(p_uncorrected == 0, 0.001, p_uncorrected)) |> 
+  mutate( data = map2(p_uncorrected, `mu > 0`, generate_data, N, mu, sd) )
+
+saveRDS(pilot.exp.stimuli, "../data/simulations/data-stimuli-seed123.rds")
+```
+
+
+Next, we compare whether the data will result in the same p-values that were used to generated the data (essentially to verify our data generating process). Below, we compare the p-values (upto 5 decimal points), and find that they are the same:
+
+```{r}
+N = 20
+dof = 19
+mu = 4
+sd = 10
+m = c(12, 16, 20)
+ntrials = 10
+p_null = 0.7
+alpha = 0.25
+
+pilot.exp.stimuli = readRDS("../data/simulations/data-stimuli-seed123.rds")
+
+# this should return 0
+pilot.exp.stimuli |> 
+  mutate(p.est = map_dbl(data, ~ t.test(.x, alternative = "greater")$p.value)) |> 
+  filter(round(p_uncorrected, 5) != round(p.est, 5)) |> 
+  nrow()
+```
+
+### Training
+
+```{r, fig.height = 8, fig.width = 12}
+training.stimuli = tibble(.seed = 12, m = 8) |> # generates data for the training task
+  mutate(.sim = map2(.seed, m, simulate_pval, mu = 5, sd, p_null, alpha, ntrials = 5)) |> 
+  unnest(.sim) |> 
+  group_by(trial) |> 
+  mutate( 
+    region_idx = row_number(),
+    data = map2(p_uncorrected, `mu > 0`, generate_data, N, mu, sd),
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N))
+  )
+```
+
+### Solution
+
+Now that we have everything prepared, we will first store the solutions as a CSV file:
+
+```{r}
+pilot.exp.stimuli |> 
+  add_row(select(training.stimuli, -c(region_idx, Profit, se))) |> 
+  rename(p = p_uncorrected, positive = `mu > 0`) |> 
+  group_by(m, trial) |> 
+  mutate(index = row_number()) |> 
+  select(m, trial, index, p, positive) |> 
+  write.csv("../data/pilot-study-2023/solutions.csv", row.names = FALSE)
+```
+
+## Graphs
+
+Before we generate the plots, we need to setup certain parameters to ensure consistency across each of the plots. First, we need to make sure the axis limits are consistent. We use consistent limits for all plots which depicts a mean and distribution of the mean (i.e. mean + 50% CI, probability density functions)
+
+
+```{r}
+pilot.exp.stimuli |> 
+  mutate( 
+    mean = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.025, mean, se, nu = dof),
+    .upper = gamlss.dist::qTF(0.975, mean, se, nu = dof)
+  )
+```
+
+
+```{r, axis-limits}
+N = 20
+df = N - 1
+
+limits = pilot.exp.stimuli |> 
+  mutate( 
+    mean = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.0025, mean, se, nu = dof),
+    .upper = gamlss.dist::qTF(0.9975, mean, se, nu = dof)
+  ) |> 
+  summarise(min = floor(min(.lower)) - 1, max = ceiling(max(.upper)) + 1) |> 
+  pivot_longer(c(min, max), names_to = "key") |> 
+  magrittr::extract2("value")
+```
+
+In addition, we want the graphs used as our stimuli to appear a certain way, which we define below:
+
+```{r, stimuli-theme}
+stimuli_theme = theme(
+   axis.title.x = element_blank(),
+   axis.text.x = element_blank(),
+   axis.title.y = element_text(size = 36),
+   axis.text.y = element_text(size = 28),
+   panel.grid.major.x = element_blank(),
+   panel.grid.minor.x = element_blank(),
+   panel.grid.major.y = element_line(colour = "#cccccc", linewidth = 1),
+   panel.grid.minor.y = element_line(colour = "#cccccc", linewidth = 1)
+  )
+```
+
+
+### Tutorial
+
+In the tutorial page, we explain the task scenario:
+
+- we first describe the data generating process: visualise the profitability of 200 stores, as well as the mean profitability
+- next, we describe the challenge: the participants have limited information from only 20 stores
+- finally, we describe the representation: estimating the mean from this uncertain process
+
+
+#### Mean + 50% CI
+
+```{r, fig.width = 12, fig.height = 4}
+# let us first generate the data for the tutorial
+set.seed(42)
+
+n_total = 200
+n_sample = 20
+
+data_tutorial = tibble(
+  mu,
+  sd,
+  profit = rnorm(n_total, mu, sd)
+)
+
+data_sample = data_tutorial |> 
+  sample_n(n_sample)
+
+# mean(data_tutorial$profit)
+# mean(data_sample$profit)
+
+ptutorial.1 = data_tutorial |> 
+  ggplot(aes(y = profit, x = 0)) +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_point(position = position_dodge2(width = 0.5), alpha = 0.5, size = 2) +
+  geom_point(data = summarise(data_tutorial, profit = mean(profit)), size = 3, colour = "#7c61d1") +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+
+ptutorial.2 = data_sample |> 
+  ggplot(aes(y = profit, x = 0)) +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_point(position = position_dodge2(width = 0.5), alpha = 0.7, size = 2) +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+
+ptutorial.3 = data_sample |> 
+  summarise(data = list(profit)) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.025, Profit, se, nu = dof),
+    .upper = gamlss.dist::qTF(0.975, Profit, se, nu = dof)
+  ) |> 
+  ggplot() +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 8, interval_size = 24) +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+
+pdf(file = "../figures/01-R-ci_calculation.pdf", useDingbats = FALSE, width = 12, height = 6)
+plot_grid(ptutorial.1, ptutorial.2, ptutorial.3, nrow = 1)
+dev.off()
+```
+
+#### Data only
+
+The first two steps for the tutorial are going to be the same. The only step which changes is Step 3:
+
+```{r, fig.width = 12, fig.height = 4}
+pdf(file = "../figures/03-R-data_only_calculation.pdf", useDingbats = FALSE, width = 8, height = 6)
+plot_grid(ptutorial.1, ptutorial.2, nrow = 1)
+dev.off()
+```
+
+
+#### Probability Density Function
+
+The first two steps for the tutorial are going to be the same. The only step which changes is Step 3:
+
+```{r, fig.width = 12, fig.height = 4}
+ptutorial.3 = data_sample |> 
+  summarise(data = list(profit)) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+  ) |> 
+  ggplot() +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  stat_slab(aes(x = 0, ydist = dist_normal(Profit, se)), scale = 0.3) +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+
+pdf(file = "../figures/02-pdf_calculation.pdf", useDingbats = FALSE, width = 12, height = 6)
+plot_grid(ptutorial.1, ptutorial.2, ptutorial.3, nrow = 1)
+dev.off()
+```
+
+
+```{r}
+data_sample |> 
+  summarise(data = list(profit)) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+  ) |> 
+  ggplot() +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  stat_slab(aes(x = -0.2, ydist = dist_normal(Profit, se)), fill = "#7f7f7f", scale = 0.5) +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+```
+
+
+#### Mean + 50% CI
+
+```{r, fig.width = 12, fig.height = 4}
+# let us first generate the data for the tutorial
+set.seed(42)
+
+n_total = 200
+n_sample = 20
+
+data_tutorial = tibble(
+  mu,
+  sd,
+  profit = rnorm(n_total, mu, sd)
+)
+
+data_sample = data_tutorial |> 
+  sample_n(n_sample)
+
+# mean(data_tutorial$profit)
+# mean(data_sample$profit)
+
+ptutorial.1 = data_tutorial |> 
+  ggplot(aes(y = profit, x = 0)) +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_point(position = position_dodge2(width = 0.5), alpha = 0.5, size = 2) +
+  geom_point(data = summarise(data_tutorial, profit = mean(profit)), size = 3, colour = "#7c61d1") +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+
+ptutorial.2 = data_sample |> 
+  ggplot(aes(y = profit, x = 0)) +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_point(position = position_dodge2(width = 0.5), alpha = 0.7, size = 2) +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+
+ptutorial.3 = data_sample |> 
+  summarise(data = list(profit)) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.025, Profit, se, nu = dof),
+    .upper = gamlss.dist::qTF(0.975, Profit, se, nu = dof)
+  ) |> 
+  ggplot(aes(y = profit, x = 0)) +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 8, interval_size = 24) +
+  scale_y_continuous(limits = c(-26, 32), breaks = seq(-20, 30, by = 10)) +
+  xlim(-1, 1) +
+  stimuli_theme
+
+pdf(file = "../figures/01-ci-calculation.pdf", useDingbats = FALSE, width = 12, height = 6)
+plot_grid(ptutorial.1, ptutorial.2, ptutorial.3, nrow = 1)
+dev.off()
+```
+
+### Mean + 50% Confidence Intervals
+
+Before we generate the plots, we need to setup certain parameters to ensure consistency across each of the plots. First, we need to make sure the axis limits are consistent:
+
+```{r}
+N = 20
+dof = N - 1
+
+limits.ci50 = pilot.exp.stimuli |> 
+  mutate( 
+    mean = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.25, mean, se, nu = dof),
+    .upper = gamlss.dist::qTF(0.75, mean, se, nu = dof)
+  ) |> 
+  summarise(min = floor(min(.lower)) - 1, max = ceiling(max(.upper)) + 1) |> 
+  pivot_longer(c(min, max), names_to = "key") |> 
+  magrittr::extract2("value")
+```
+
+
+```{r}
+i = 16
+j = 10
+k = 1
+
+pilot.exp.stimuli |> 
+  group_by(m, trial) |> 
+  mutate(plot_id = row_number()) |> 
+  select(plot_id, everything()) |> 
+  filter( m == i & trial == j) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.25, Profit, se, nu = dof),
+    .upper = gamlss.dist::qTF(0.75, Profit, se, nu = dof)
+  ) |> 
+  ggplot() + 
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333") +
+  scale_y_continuous( limits = limits.ci50 ) +
+  xlim(-1, 1) +
+  facet_wrap(. ~ plot_id, nrow = 2)
+```
+#### Training task
+
+```{r}
+for (j in 1:5) { # we have 5 trials
+  for (k in 1:8) { # we only show 8 regions in training
+    num_comparisons = 8
+    p = training.stimuli |>
+      mutate(.id = row_number()) |>
+      select(.id, everything()) |>
+      filter( m == num_comparisons & trial == j & .id == k) |>
+      mutate(
+        .lower = gamlss.dist::qTF(0.25, Profit, se, nu = dof),
+        .upper = gamlss.dist::qTF(0.75, Profit, se, nu = dof)
+      ) |>
+      ggplot() +
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 8, interval_size = 24) +
+      scale_y_continuous( limits = limits.ci50 ) +
+      xlim(-1, 1) +
+      stimuli_theme
+
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/ci-50/profits-m8-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+
+#### Feedback for training task
+
+```{r}
+for (j in 1:5) { # we have 5 trials
+  for (k in 1:8) { # we only show 8 regions in training
+    num_comparisons = 8
+    
+    .data = training.stimuli |>
+      mutate(.id = row_number()) |>
+      select(.id, everything()) |>
+      filter( m == num_comparisons & trial == j & .id == k) |>
+      mutate(
+        .lower = gamlss.dist::qTF(0.25, Profit, se, nu = dof),
+        .upper = gamlss.dist::qTF(0.75, Profit, se, nu = dof),
+        label = ifelse(`mu > 0`, "Profitable", "")
+      )
+    
+    profitable = .data$`mu > 0`[[1]]
+    
+    p = .data |>
+      ggplot() +
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 8, interval_size = 24) +
+      scale_y_continuous( limits = limits.ci50 ) +
+      xlim(-1, 1) +
+      stimuli_theme
+  
+    if(profitable) {
+      p = p + geom_label(aes(label = label), x = 0.4, y = 18, size = 14, fill = "#7c61d1", colour = "#ffffff")
+    }
+
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/ci-50/feedback-m8-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+#### Test trials
+
+```{r}
+m = c(12, 16, 20)
+trials_list = c(10, 10, 10) # number of trials for the training set is 5
+
+for (i in 1:length(m)) {
+  for (j in 1:trials_list[i]) {
+    for (k in 1:m[i]) {
+      num_comparisons = m[i]
+      
+      p = pilot.exp.stimuli |>
+        group_by(m, trial) |>
+        mutate(.id = row_number()) |>
+        select(.id, everything()) |>
+        filter( m == num_comparisons & trial == j & .id == k) |>
+        mutate(
+          Profit = map_dbl(data, ~ mean(.x)),
+          se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+          .lower = gamlss.dist::qTF(0.25, Profit, se, nu = dof),
+          .upper = gamlss.dist::qTF(0.75, Profit, se, nu = dof)
+        ) |>
+        ggplot() +
+        geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+        geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 8, interval_size = 24) +
+        scale_y_continuous( limits = limits.ci50 ) +
+        xlim(-1, 1) +
+        stimuli_theme
+
+      ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/ci-50/profits-m', m[i],'-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+    }
+  }
+}
+```
+
+
+#### Attention check question
+
+```{r}
+generate_data_attn = function(m, N, mean, sd) {
+  scale(rnorm(N))[,1]*sd + mean + runif(1, -0.25, 0.25) # shifts the mean around a bit
+}
+
+attention.check.stimuli.ci50 = crossing(m = m, .seed = 1) |>
+  mutate(.id = map(m, ~ 1:.x)) |>
+  unnest(.id) |>
+  group_by(m) |>
+  mutate(
+    data = map(.id, generate_data_attn, N, mean = 16, sd = 2)
+  )
+
+attention.check.stimuli.ci50 |>
+  group_by(m) |> 
+  filter( m == 12 & .id == 3) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = gamlss.dist::qTF(0.25, Profit, se, nu = dof),
+    .upper = gamlss.dist::qTF(0.75, Profit, se, nu = dof)
+  ) |> 
+  ggplot() + 
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 8, interval_size = 24) +
+  scale_y_continuous( limits = c(0, 18), breaks = seq(0, 20, by = 4) ) +
+  xlim(-1, 1) +
+  stimuli_theme
+```
+
+```{r}
+for (i in 1:length(m)) { # we dont have attention check for training
+  for (k in 1:m[i]) {
+    num_comparisons = m[i]
+    
+    p = attention.check.stimuli.ci50 |> 
+      group_by(m) |> 
+      filter( m == num_comparisons & .id == k) |> 
+      mutate( 
+        Profit = map_dbl(data, ~ mean(.x)),
+        se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+        .lower = gamlss.dist::qTF(0.25, Profit, se, nu = dof),
+        .upper = gamlss.dist::qTF(0.75, Profit, se, nu = dof)
+      ) |> 
+      ggplot() + 
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      geom_pointinterval(aes(x = 0, y = Profit, ymin = .lower, ymax = .upper), fill = "#333333", point_size = 8, interval_size = 24) +
+      scale_y_continuous( limits = c(0, 18), breaks = seq(0, 20, by = 4) ) +
+      xlim(-1, 1) +
+      stimuli_theme
+    
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/ci-50/profits-m', m[i],'-t0-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+
+### Probability density functions
+
+Before we generate the plots, we need to setup certain parameters to ensure consistency across each of the plots. First, we need to make sure the axis limits are consistent:
+
+```{r, axis-limits-2}
+N = 20
+dof = N - 1
+
+limits.pdf = pilot.exp.stimuli |> 
+  mutate( 
+    mean = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+    .lower = floor(gamlss.dist::qTF(0.0025, mean, se, nu = dof)),
+    .upper = ceiling(gamlss.dist::qTF(0.9975, mean, se, nu = dof))
+  ) |> 
+  summarise(min = min(.lower) - 1, max = max(.upper) + 1) |> 
+  pivot_longer(c(min, max), names_to = "key") |> 
+  magrittr::extract2("value")
+```
+
+
+
+```{r}
+i = 20
+j = 4
+
+pilot.exp.stimuli |> 
+  group_by(m, trial) |> 
+  mutate(plot_id = row_number()) |> 
+  select(plot_id, everything()) |> 
+  filter( m == i & trial == j) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+  ) |> 
+  ggplot() + 
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  stat_slab(aes(x = -0.2, ydist = dist_normal(Profit, se)), fill = "#7f7f7f") +
+  scale_y_continuous( limits = limits.pdf ) +
+  xlim(-1, 1) +
+  facet_wrap(. ~ plot_id, nrow = 2)
+```
+
+#### Training task
+
+```{r}
+for (j in 1:5) { # we have 5 trials
+  for (k in 1:8) { # we only show 8 regions in training
+    num_comparisons = 8
+    p = training.stimuli |>
+      mutate(.id = row_number()) |>
+      select(.id, everything()) |>
+      filter( m == num_comparisons & trial == j & .id == k) |>
+      ggplot() +
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      stat_slab(aes(x = -0.3, ydist = dist_normal(Profit, se)), fill = "#7f7f7f", scale = 0.7) +
+      scale_y_continuous( limits = limits.pdf ) +
+      xlim(-1, 1) +
+      labs(y = "Profit") +
+      stimuli_theme
+
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/pdf/profits-m8-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+
+#### Feedback for training task
+
+```{r}
+for (j in 1:5) { # we have 5 trials
+  for (k in 1:8) { # we only show 8 regions in training
+    num_comparisons = 8
+    
+    .data = training.stimuli |>
+      mutate(.id = row_number()) |>
+      select(.id, everything()) |>
+      filter( m == num_comparisons & trial == j & .id == k) |>
+      mutate(label = ifelse(`mu > 0`, "Profitable", ""))
+    
+    profitable = .data$`mu > 0`[[1]]
+    
+    p = .data |>
+      ggplot() +
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      stat_slab(aes(x = -0.3, ydist = dist_normal(Profit, se)), fill = "#7f7f7f", scale = 0.7) +
+      scale_y_continuous( limits = limits.pdf ) +
+      xlim(-1, 1) +
+      labs(y = "Profit") +
+      stimuli_theme
+  
+    if(profitable) {
+      p = p + geom_label(aes(label = label), x = 0.4, y = 20, size = 14, fill = "#7c61d1", colour = "#ffffff")
+    }
+
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/pdf/feedback-m8-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+#### Test trials
+
+```{r}
+m = c(12, 16, 20)
+trials_list = c(10, 10, 10) # number of trials for the training set is 5
+
+for (i in 1:length(m)) {
+  for (j in 1:trials_list[i]) {
+    for (k in 1:m[i]) {
+      num_comparisons = m[i]
+      
+      p = pilot.exp.stimuli |>
+        group_by(m, trial) |>
+        mutate(.id = row_number()) |>
+        select(.id, everything()) |>
+        filter( m == num_comparisons & trial == j & .id == k) |>
+        mutate(
+          Profit = map_dbl(data, ~ mean(.x)),
+          se = map_dbl(data, ~ sd(.x)/sqrt(N))
+        ) |>
+        ggplot() +
+        geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+        stat_slab(aes(x = -0.3, ydist = dist_normal(Profit, se)), fill = "#7f7f7f", scale = 0.7) +
+        scale_y_continuous( limits = limits.pdf ) +
+        xlim(-1, 1) +
+        labs(y = "Profit") +
+        stimuli_theme
+
+      ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/pdf/profits-m', m[i],'-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+    }
+  }
+}
+```
+
+
+#### Attention check question
+
+```{r}
+attention.check.stimuli.pdf = crossing(m = m, .seed = 1) |>
+  mutate(.id = map(m, ~ 1:.x)) |>
+  unnest(.id) |>
+  group_by(m) |>
+  mutate(
+    data = map(.id, generate_data_attn, N, mean = 16, sd = 2)
+  )
+
+attention.check.stimuli.pdf |>
+  group_by(m) |> 
+  filter( m == 12 & .id == 3) |> 
+  mutate( 
+    Profit = map_dbl(data, ~ mean(.x)),
+    se = map_dbl(data, ~ sd(.x)/sqrt(N))
+  ) |> 
+  ggplot() + 
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  stat_slab(aes(x = -0.2, ydist = dist_normal(Profit, se)), fill = "#7f7f7f", scale = 0.4) +
+  scale_y_continuous( limits = c(0, 18), breaks = seq(0, 20, by = 4) ) +
+  labs(y = "Profit") +
+  xlim(-1, 1) +
+  stimuli_theme
+```
+
+```{r}
+for (i in 1:length(m)) { # we dont have attention check for training
+  for (k in 1:m[i]) {
+    num_comparisons = m[i]
+    
+    p = attention.check.stimuli.pdf |> 
+      group_by(m) |> 
+      filter( m == num_comparisons & .id == k) |> 
+      mutate( 
+        Profit = map_dbl(data, ~ mean(.x)),
+        se = map_dbl(data, ~ sd(.x)/sqrt(N)),
+      ) |> 
+      ggplot() + 
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      stat_slab(aes(x = -0.2, ydist = dist_normal(Profit, se)), fill = "#7f7f7f", scale = 0.4) +
+      scale_y_continuous( limits = c(0, 18), breaks = seq(0, 20, by = 4) ) +
+      labs(y = "Profit") +
+      xlim(-1, 1) +
+      stimuli_theme
+    
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/pdf/profits-m', m[i],'-t0-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+### Data only condition
+
+```{r}
+limits.data = pilot.exp.stimuli |> 
+  mutate( 
+    .lower = map_dbl(data, min),
+    .upper = map_dbl(data, max)
+  ) |> 
+  summarise(min = floor(min(.lower)), max = ceiling(max(.upper))) |> 
+  pivot_longer(c(min, max), names_to = "key") |> 
+  magrittr::extract2("value")
+```
+
+
+
+```{r}
+i = 20
+j = 4
+
+pilot.exp.stimuli |> 
+  group_by(m, trial) |> 
+  mutate(plot_id = row_number()) |> 
+  filter( m == i & trial == j) |> 
+  unnest(data) |> 
+  ggplot() + 
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_quasirandom(aes(x = 0, y = data), alpha = 0.7) +
+  scale_y_continuous( limits = limits.data ) +
+  xlim(-1, 1) +
+  facet_wrap(. ~ plot_id, nrow = 2)
+```
+
+
+#### Training task
+
+```{r}
+for (j in 1:5) { # we have 5 trials
+  for (k in 1:8) { # we only show 8 regions in training
+    num_comparisons = 8
+    p = training.stimuli |>
+      mutate(.id = row_number()) |>
+      select(.id, everything()) |>
+      filter( m == num_comparisons & trial == j & .id == k) |>
+      unnest(data) |> 
+      ggplot() +
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      geom_quasirandom(aes(x = 0, y = data), size = 5, colour = "#444444", alpha = 0.7) +
+      scale_y_continuous( limits = limits.data ) +
+      xlim(-1, 1) +
+      labs(y = "Profit") +
+      stimuli_theme
+
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/data-only/profits-m8-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+
+#### Feedback for training task
+
+```{r}
+for (j in 1:5) { # we have 5 trials
+  for (k in 1:8) { # we only show 8 regions in training
+    num_comparisons = 8
+    
+    .data = training.stimuli |>
+      mutate(.id = row_number()) |>
+      select(.id, everything()) |>
+      filter( m == num_comparisons & trial == j & .id == k) |>
+      mutate(label = ifelse(`mu > 0`, "Profitable", ""))
+    
+    profitable = .data$`mu > 0`[[1]]
+    
+    p = .data |>
+      unnest(data) |> 
+      ggplot() +
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      geom_quasirandom(aes(x = 0, y = data), size = 5, colour = "#444444", alpha = 0.7) +
+      scale_y_continuous( limits = limits.data ) +
+      xlim(-1, 1) +
+      labs(y = "Profit") +
+      stimuli_theme
+  
+    if(profitable) {
+      p = p + geom_label(aes(label = label), x = 0.4, y = 40, size = 14, fill = "#7c61d1", colour = "#ffffff")
+    }
+
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/data-only/feedback-m8-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```
+
+#### Test trials
+
+```{r}
+m = c(12, 16, 20)
+trials_list = c(10, 10, 10) # number of trials for the training set is 5
+
+for (i in 1:length(m)) {
+  for (j in 1:trials_list[i]) {
+    for (k in 1:m[i]) {
+      num_comparisons = m[i]
+      
+      p = pilot.exp.stimuli |>
+        group_by(m, trial) |>
+        mutate(.id = row_number()) |>
+        select(.id, everything()) |>
+        filter( m == num_comparisons & trial == j & .id == k) |>
+        unnest(data) |> 
+        ggplot() +
+        geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+        geom_quasirandom(aes(x = 0, y = data), size = 5, colour = "#444444", alpha = 0.7) +
+        scale_y_continuous( limits = limits.data  ) +
+        xlim(-1, 1) +
+        labs(y = "Profit") +
+        stimuli_theme
+
+      ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/data-only/profits-m', m[i],'-t', j, '-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+    }
+  }
+}
+```
+
+
+#### Attention check question
+
+```{r}
+attention.check.stimuli.pdf = crossing(m = m, .seed = 1) |>
+  mutate(.id = map(m, ~ 1:.x)) |>
+  unnest(.id) |>
+  group_by(m) |>
+  mutate(
+    data = map(.id, generate_data_attn, N, mean = 16, sd = 1)
+  )
+
+attention.check.stimuli.pdf |>
+  group_by(m) |> 
+  filter( m == 12 & .id == 3) |> 
+  unnest(data) |> 
+  ggplot() +
+  geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+  geom_quasirandom(aes(x = 0, y = data), size = 5, colour = "#444444", alpha = 0.7) +
+  scale_y_continuous( limits = c(0, 22), breaks = seq(0, 40, by = 10) ) +
+  labs(y = "Profit") +
+  xlim(-1, 1) +
+  stimuli_theme
+```
+
+```{r}
+for (i in 1:length(m)) { # we dont have attention check for training
+  for (k in 1:m[i]) {
+    num_comparisons = m[i]
+    
+    p = attention.check.stimuli.pdf |> 
+      group_by(m) |> 
+      filter( m == num_comparisons & .id == k) |> 
+      unnest(data) |> 
+      ggplot() +
+      geom_hline( yintercept = 0, color = "red", alpha = 1, linewidth = 1.5 ) +
+      geom_quasirandom(aes(x = 0, y = data), size = 5, colour = "#444444", alpha = 0.7) +
+      scale_y_continuous( limits = c(0, 20), breaks = seq(0, 40, by = 10) ) +
+      labs(y = "Profit") +
+      xlim(-1, 1) +
+      stimuli_theme
+    
+    ggsave(filename = paste0('../../abhsarma.github.io/assets/vis-insights/pilot-2023/data-only/profits-m', m[i],'-t0-', k, '.png'), height = 8, width = 5, units = "in", dpi = 72, plot = p, device = "jpeg")
+  }
+}
+```

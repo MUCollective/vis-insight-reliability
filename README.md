@@ -20,5 +20,5 @@ Anonymized OSF link: https://osf.io/xtsfz/?view_only=22b9e22501eb42c2ab1afea4599
 - `figures`: figures for experiment interface and the paper
 - `plots`: the stimuli/plots participants saw in the experiments
 - `survey`:
-  - `survey-example.pdf`: The Qualtrics survey. Note that we experienced some difficulty in exporting the qualtrics survey to PDF, and so we are sharing a random participant's response. However, this did not preserve the layout we used for showing the plots. Post-review we would be happy to share the qsf file, but currently we cannot as it would break CHI's anonymity policy.
+  - `survey-example.pdf`: Screenshots of every page of the Qualtrics survey. Post-review we would be happy to share the qsf file, but currently we cannot as it would break CHI's anonymity policy.
   - `survey-flow.pdf`: The flow of the experiment that participants go through.

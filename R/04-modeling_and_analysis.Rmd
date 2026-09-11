@@ -917,6 +917,40 @@ draws.fit |>
 
 # pdf(file = "../figures/figures-rendered/02-mean-pay.pdf", useDingbats = FALSE, width = 12, height = 6)
 ```
+We use the following figure in the paper:
+
+```{r payout-variability, fig.height = 6, fig.width = 12}
+normative_payoff = performance.normative_strategies |> 
+  mutate( payoff = tp*50 + tn*10 + fp*-150 + fn*-40 ) |> 
+  group_by(method) |> 
+  summarise(payoff = mean(payoff), .groups = "keep") |> 
+  filter(method %in% c("BH", "no correction"))
+
+df.pay.summary = df.responses.payoff |> 
+  group_by(user_id, vis) |> 
+  summarise(payoff = mean(payoff), .groups = "keep")
+
+p.payoff = df.pay.summary |> 
+  ggplot() +
+  geom_histogram(aes(payoff, after_stat(count/60)), data = df.pay.summary, binwidth = 50, boundary = 0) +
+  # stat_slabinterval(aes(x = payoff, fill = vis, side = "left"), scale = 0.05, .width = 0.95) +
+  geom_vline(aes(xintercept = payoff, colour = method), data = normative_payoff, linewidth = 1) +
+  scale_y_continuous(breaks = seq(-1, 0.3, by = 0.1)) +
+  scale_x_continuous(breaks = seq(-1200, 400, by = 200)) +
+  coord_cartesian(ylim = c(-0.01, 0.2)) +
+  facet_grid(vis ~ .) +
+  scale_colour_benchmark() +
+  scale_fill_densities() + 
+  theme(
+    legend.position="none",
+    panel.spacing.y = unit(1, "cm"),
+    axis.title = element_blank()
+  )
+
+pdf(file = "../payout.pdf", useDingbats = FALSE, width = 12, height = 8)
+p.payoff
+dev.off()
+```
 
 ## Marginalisation explanation
 
